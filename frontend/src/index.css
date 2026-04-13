@@ -1,0 +1,80 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Inter:ital,opsz,wght@0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: theme('fontFamily.sans');
+  @apply bg-slate-50 text-slate-900 antialiased;
+  line-height: 1.6;
+  margin: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: theme('fontFamily.display');
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 0;
+}
+
+p { margin: 0; }
+
+#root {
+  display: flex;
+  min-height: 100svh;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400;
+}
+
+/* ── Radix UI animations ────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes zoom-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes zoom-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
+}
+@keyframes slide-up-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in    { animation: fade-in 0.15s ease; }
+.animate-fade-out   { animation: fade-out 0.15s ease; }
+.animate-zoom-in    { animation: zoom-in 0.2s ease; }
+.animate-zoom-out   { animation: zoom-out 0.15s ease; }
+.animate-slide-up   { animation: slide-up-fade 0.2s ease; }
+
+/* Radix Dialog state-based animations */
+[data-state="open"].overlay-anim   { animation: fade-in 0.15s ease; }
+[data-state="closed"].overlay-anim { animation: fade-out 0.15s ease; }
+[data-state="open"].content-anim   { animation: zoom-in 0.2s ease; }
+[data-state="closed"].content-anim { animation: zoom-out 0.15s ease; }
+
+/* Radix Switch */
+[data-state="checked"].switch-root   { @apply bg-indigo-500; }
+[data-state="unchecked"].switch-root { @apply bg-slate-200; }
+[data-state="checked"].switch-thumb  { transform: translateX(18px); }
+[data-state="unchecked"].switch-thumb { transform: translateX(2px); }
+.switch-thumb { transition: transform 0.15s ease; }

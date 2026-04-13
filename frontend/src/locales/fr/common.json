@@ -1,0 +1,38 @@
+{
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "exams": "Examens",
+    "teachers": "Surveillants",
+    "assignment": "Distribution",
+    "documents": "Documents",
+    "settings": "Paramètres"
+  },
+  "actions": {
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "add": "Ajouter",
+    "edit": "Modifier",
+    "delete": "Supprimer",
+    "confirm": "Confirmer",
+    "close": "Fermer",
+    "search": "Rechercher"
+  },
+  "status": {
+    "loading": "Chargement…",
+    "saving": "Enregistrement…",
+    "empty": "Aucun élément"
+  },
+  "level": {
+    "BAC1": "1ère Bac",
+    "BAC2_NORMALE": "2ème Bac (Normale)",
+    "BAC2_RATTRAPAGE": "2ème Bac (Rattrapage)"
+  },
+  "shift": {
+    "MORNING": "Matin",
+    "AFTERNOON": "Après-midi"
+  },
+  "gender": {
+    "M": "Homme",
+    "F": "Femme"
+  }
+}
