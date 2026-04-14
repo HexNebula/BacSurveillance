@@ -159,6 +159,40 @@ def delete_exam_slot(db: Session, slot_id: int) -> bool:
     return True
 
 
+def copy_slots_from(
+    db: Session, target_ef: models.ExamFiliere, source_ef_id: int
+) -> list[models.ExamSlot]:
+    """
+    Replace all slots of `target_ef` with a copy of every slot in `source_ef_id`.
+    Returns the newly created slots.
+    """
+    source_slots = get_slots_by_exam_filiere(db, source_ef_id)
+
+    # Delete all existing slots on the target filière
+    db.query(models.ExamSlot).filter_by(exam_filiere_id=target_ef.id).delete()
+    db.flush()
+
+    new_slots: list[models.ExamSlot] = []
+    for s in source_slots:
+        slot = models.ExamSlot(
+            exam_id=target_ef.exam_id,
+            exam_filiere_id=target_ef.id,
+            subject_id=s.subject_id,
+            day=s.day,
+            shift=s.shift,
+            slot_order=s.slot_order,
+            is_active=s.is_active,
+            reserve_count=s.reserve_count,
+        )
+        db.add(slot)
+        new_slots.append(slot)
+
+    db.commit()
+    for slot in new_slots:
+        db.refresh(slot)
+    return new_slots
+
+
 # ── ExamFiliereRoom ────────────────────────────────────────────────────────
 
 def get_filiere_rooms(db: Session, exam_filiere_id: int) -> list[models.ExamFiliereRoom]:

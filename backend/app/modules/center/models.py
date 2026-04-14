@@ -37,6 +37,7 @@ class Filiere(Base):
     """
     Global filière catalog (e.g. Sciences Maths, Lettres).
     Defined once; enrolled into exams via ExamFiliere (in scheduling.models).
+    level: 'BAC1' | 'BAC2' | None (null = applies to any level)
     """
     __tablename__ = "filieres"
 
@@ -44,6 +45,7 @@ class Filiere(Base):
     name_fr:        Mapped[str] = mapped_column(String(100), nullable=False)
     name_ar:        Mapped[str] = mapped_column(String(100), nullable=False, default="")
     candidate_type: Mapped[str] = mapped_column(String(20), nullable=False, default="OFFICIEL")
+    level:          Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
 
     filiere_subjects: Mapped[list["FiliereSubject"]] = relationship(
         back_populates="filiere", cascade="all, delete-orphan", order_by="FiliereSubject.order"

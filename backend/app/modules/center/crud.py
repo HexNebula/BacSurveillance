@@ -116,8 +116,13 @@ def create_filiere(db: Session, data: schemas.FiliereCreate) -> models.Filiere:
     return obj
 
 
-def get_filieres(db: Session) -> list[models.Filiere]:
-    return db.query(models.Filiere).order_by(models.Filiere.name_fr).all()
+def get_filieres(db: Session, level: str | None = None) -> list[models.Filiere]:
+    q = db.query(models.Filiere)
+    if level:
+        q = q.filter(
+            (models.Filiere.level == level) | (models.Filiere.level.is_(None))
+        )
+    return q.order_by(models.Filiere.name_fr).all()
 
 
 def get_filiere(db: Session, filiere_id: int) -> models.Filiere | None:
@@ -159,3 +164,25 @@ def remove_filiere_subject(db: Session, fs_id: int) -> bool:
     db.delete(obj)
     db.commit()
     return True
+
+
+def copy_subjects_from(db: Session, target_filiere_id: int, source_filiere_id: int) -> int:
+    """Copy subjects from source filière to target, skipping already-assigned ones. Returns count added."""
+    source = get_filiere(db, source_filiere_id)
+    if not source:
+        return 0
+    existing_ids = {
+        fs.subject_id
+        for fs in db.query(models.FiliereSubject).filter_by(filiere_id=target_filiere_id).all()
+    }
+    added = 0
+    for fs in source.filiere_subjects:
+        if fs.subject_id not in existing_ids:
+            db.add(models.FiliereSubject(
+                filiere_id=target_filiere_id,
+                subject_id=fs.subject_id,
+                order=fs.order,
+            ))
+            added += 1
+    db.commit()
+    return added

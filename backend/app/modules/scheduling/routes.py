@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.modules.scheduling import crud, schemas
+from app.modules.scheduling import crud, schemas, models as sm
 
 router = APIRouter(prefix="/scheduling", tags=["Scheduling"])
 
@@ -45,6 +45,8 @@ def delete_exam(exam_id: int, db: Session = Depends(get_db)):
 
 @router.post("/exam-filieres", response_model=schemas.ExamFiliereOut, status_code=201)
 def create_exam_filiere(data: schemas.ExamFiliereCreate, db: Session = Depends(get_db)):
+    if db.query(sm.ExamFiliere).filter_by(exam_id=data.exam_id, filiere_id=data.filiere_id).first():
+        raise HTTPException(status_code=409, detail="Cette filière est déjà inscrite à cet examen.")
     return crud.create_exam_filiere(db, data)
 
 
@@ -96,6 +98,21 @@ def update_exam_slot(slot_id: int, data: schemas.ExamSlotUpdate, db: Session = D
 def delete_exam_slot(slot_id: int, db: Session = Depends(get_db)):
     if not crud.delete_exam_slot(db, slot_id):
         raise HTTPException(status_code=404, detail="Slot not found")
+
+
+@router.post("/exam-filieres/{ef_id}/copy-slots-from", response_model=list[schemas.ExamSlotOut])
+def copy_slots_from(ef_id: int, data: schemas.CopySlotsFrom, db: Session = Depends(get_db)):
+    target = crud.get_exam_filiere(db, ef_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Target ExamFiliere not found")
+    source = crud.get_exam_filiere(db, data.source_ef_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Source ExamFiliere not found")
+    if source.exam_id != target.exam_id:
+        raise HTTPException(status_code=400, detail="Source and target must belong to the same exam")
+    if source.id == target.id:
+        raise HTTPException(status_code=400, detail="Source and target cannot be the same filière")
+    return crud.copy_slots_from(db, target, data.source_ef_id)
 
 
 # ── ExamFiliereRooms ───────────────────────────────────────────────────────

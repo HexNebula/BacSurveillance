@@ -6,6 +6,8 @@ from app.core.database import get_db
 from app.modules.assignment import crud, schemas
 from app.modules.assignment.algorithm import run_assignment
 from app.modules.scheduling.crud import get_exam
+from app.modules.scheduling import models as sm
+from app.modules.scheduling.models import ExamStatusEnum, LevelEnum
 
 router = APIRouter(prefix="/assignment", tags=["Assignment"])
 
@@ -103,7 +105,23 @@ def run(exam_id: int, db: Session = Depends(get_db)):
     exam = get_exam(db, exam_id)
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
+
+    # ── Prerequisite gate ─────────────────────────────────────────────────
+    if exam.level == LevelEnum.BAC2_NORMALE:
+        prereq = db.query(sm.Exam).filter_by(year=exam.year, level=LevelEnum.BAC1).first()
+        if not prereq or prereq.status == ExamStatusEnum.DRAFT:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Distribuez d'abord l'examen 1BAC {exam.year} avant de lancer celui-ci.",
+            )
+
     result = run_assignment(db, exam)
+
+    # ── Mark exam as active after successful run ───────────────────────────
+    if exam.status == ExamStatusEnum.DRAFT:
+        exam.status = ExamStatusEnum.ACTIVE
+        db.commit()
+
     return schemas.AssignmentResultOut(
         room_assignments=[schemas.RoomAssignmentOut.model_validate(r) for r in result.room_assignments],
         madaoume=[schemas.MadaoumeAssignmentOut.model_validate(m) for m in result.madaoume],

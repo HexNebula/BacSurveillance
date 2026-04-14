@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.center import crud, schemas
-from app.modules.center.models import FiliereSubject
+from app.modules.center.models import FiliereSubject, Room, Subject
 from app.modules.assignment.models import Teacher
 from app.modules.scheduling.models import ExamSlot
 
@@ -27,6 +27,8 @@ def update_settings(data: schemas.CenterSettingsUpdate, db: Session = Depends(ge
 
 @router.post("/rooms", response_model=schemas.RoomOut, status_code=201)
 def create_room(data: schemas.RoomCreate, db: Session = Depends(get_db)):
+    if db.query(Room).filter_by(name=data.name).first():
+        raise HTTPException(status_code=409, detail="Une salle avec ce nom existe déjà.")
     return crud.create_room(db, data)
 
 
@@ -37,6 +39,10 @@ def list_rooms(db: Session = Depends(get_db)):
 
 @router.patch("/rooms/{room_id}", response_model=schemas.RoomOut)
 def update_room(room_id: int, data: schemas.RoomUpdate, db: Session = Depends(get_db)):
+    if data.name:
+        existing = db.query(Room).filter_by(name=data.name).first()
+        if existing and existing.id != room_id:
+            raise HTTPException(status_code=409, detail="Une salle avec ce nom existe déjà.")
     obj = crud.update_room(db, room_id, data)
     if not obj:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -53,6 +59,8 @@ def delete_room(room_id: int, db: Session = Depends(get_db)):
 
 @router.post("/subjects", response_model=schemas.SubjectOut, status_code=201)
 def create_subject(data: schemas.SubjectCreate, db: Session = Depends(get_db)):
+    if db.query(Subject).filter_by(name_fr=data.name_fr).first():
+        raise HTTPException(status_code=409, detail="Une matière avec ce nom existe déjà.")
     return crud.create_subject(db, data)
 
 
@@ -63,6 +71,10 @@ def list_subjects(db: Session = Depends(get_db)):
 
 @router.patch("/subjects/{subject_id}", response_model=schemas.SubjectOut)
 def update_subject(subject_id: int, data: schemas.SubjectUpdate, db: Session = Depends(get_db)):
+    if data.name_fr:
+        existing = db.query(Subject).filter_by(name_fr=data.name_fr).first()
+        if existing and existing.id != subject_id:
+            raise HTTPException(status_code=409, detail="Une matière avec ce nom existe déjà.")
     obj = crud.update_subject(db, subject_id, data)
     if not obj:
         raise HTTPException(status_code=404, detail="Subject not found")
@@ -95,8 +107,8 @@ def create_filiere(data: schemas.FiliereCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/filieres", response_model=list[schemas.FiliereOut])
-def list_filieres(db: Session = Depends(get_db)):
-    return crud.get_filieres(db)
+def list_filieres(level: str | None = None, db: Session = Depends(get_db)):
+    return crud.get_filieres(db, level=level)
 
 
 @router.patch("/filieres/{filiere_id}", response_model=schemas.FiliereOut)
@@ -124,6 +136,16 @@ def delete_filiere(filiere_id: int, db: Session = Depends(get_db)):
 @router.post("/filieres/{filiere_id}/subjects", response_model=schemas.FiliereSubjectOut, status_code=201)
 def add_filiere_subject(filiere_id: int, data: schemas.FiliereSubjectCreate, db: Session = Depends(get_db)):
     return crud.add_filiere_subject(db, filiere_id, data)
+
+
+@router.post("/filieres/{filiere_id}/copy-subjects-from")
+def copy_subjects_from(filiere_id: int, data: schemas.CopySubjectsFrom, db: Session = Depends(get_db)):
+    if not crud.get_filiere(db, filiere_id):
+        raise HTTPException(status_code=404, detail="Filière not found")
+    if filiere_id == data.source_filiere_id:
+        raise HTTPException(status_code=400, detail="Source et cible ne peuvent pas être la même filière")
+    added = crud.copy_subjects_from(db, filiere_id, data.source_filiere_id)
+    return {"added": added}
 
 
 @router.delete("/filiere-subjects/{fs_id}", status_code=204)
