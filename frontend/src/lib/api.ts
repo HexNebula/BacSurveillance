@@ -186,6 +186,9 @@ export const assignmentApi = {
       fair_target_ceil: number
     }>(`/assignment/exams/${examId}/run`).then(r => r.data),
 
+  resetAssignment: (examId: number) =>
+    http.post(`/assignment/exams/${examId}/reset`).then(r => r.data),
+
   getRoomAssignments: (examId: number) =>
     http.get<RoomAssignment[]>(`/assignment/exams/${examId}/room-assignments`).then(r => r.data),
 

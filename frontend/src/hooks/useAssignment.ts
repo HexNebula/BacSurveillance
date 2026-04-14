@@ -114,6 +114,18 @@ export function useRunAssignment() {
   })
 }
 
+export function useResetAssignment(examId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => assignmentApi.resetAssignment(examId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['exams', examId, 'room-assignments'] })
+      qc.invalidateQueries({ queryKey: ['exams', examId, 'teacher-schedule'] })
+      qc.invalidateQueries({ queryKey: ['exams'] })
+    },
+  })
+}
+
 export function useRoomAssignments(examId: number) {
   return useQuery({
     queryKey: ['exams', examId, 'room-assignments'],
