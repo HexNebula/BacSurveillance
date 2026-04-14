@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, X, Copy } from 'lucide-react'
 import type { Filiere, FiliereSubject } from '../../types'
 import {
   useFilieres,
@@ -8,6 +8,7 @@ import {
   useDeleteFiliere,
   useAddFiliereSubject,
   useRemoveFiliereSubject,
+  useCopyFiliereSubjects,
   useSubjects,
 } from '../../hooks/useCenter'
 import { useToast } from '../../hooks/useToast'
@@ -86,11 +87,62 @@ function FiliereFormModal({ open, onClose, editing }: {
   )
 }
 
-function SubjectManager({ filiere }: { filiere: Filiere }) {
+function CopySubjectsModal({ open, onClose, filiere, allFilieres }: {
+  open: boolean
+  onClose: () => void
+  filiere: Filiere
+  allFilieres: Filiere[]
+}) {
+  const copySubjects = useCopyFiliereSubjects()
+  const toast = useToast()
+  const [sourceId, setSourceId] = useState('')
+
+  const options = allFilieres
+    .filter(f => f.id !== filiere.id)
+    .map(f => ({ value: f.id, label: f.name_fr }))
+
+  const handleClose = () => { setSourceId(''); onClose() }
+
+  const handleCopy = () => {
+    copySubjects.mutate({ targetId: filiere.id, sourceId: Number(sourceId) }, {
+      onSuccess: ({ added }) => {
+        toast.success(added > 0 ? `${added} matière${added > 1 ? 's' : ''} ajoutée${added > 1 ? 's' : ''}` : 'Aucune nouvelle matière à ajouter')
+        handleClose()
+      },
+      onError: () => toast.error('Erreur lors de la copie'),
+    })
+  }
+
+  return (
+    <Modal open={open} onClose={handleClose} title={`Copier les matières vers "${filiere.name_fr}"`} size="sm">
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-slate-500">
+          Les matières de la filière source seront ajoutées à <strong>{filiere.name_fr}</strong>. Les matières déjà assignées ne seront pas dupliquées.
+        </p>
+        <Select
+          label="Copier depuis"
+          placeholder="— choisir une filière source —"
+          value={sourceId}
+          options={options}
+          onChange={e => setSourceId(e.target.value)}
+        />
+        <div className="flex justify-end gap-2 mt-1">
+          <Button variant="secondary" onClick={handleClose}>Annuler</Button>
+          <Button variant="primary" onClick={handleCopy} loading={copySubjects.isPending} disabled={!sourceId}>
+            Copier
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function SubjectManager({ filiere, allFilieres }: { filiere: Filiere; allFilieres: Filiere[] }) {
   const { data: allSubjects = [] } = useSubjects()
   const addSubject = useAddFiliereSubject()
   const removeSubject = useRemoveFiliereSubject()
   const toast = useToast()
+  const [copyOpen, setCopyOpen] = useState(false)
 
   const assignedIds = new Set(filiere.filiere_subjects.map(fs => fs.subject_id))
 
@@ -136,8 +188,8 @@ function SubjectManager({ filiere }: { filiere: Filiere }) {
         </div>
       )}
 
-      {unassigned.length > 0 && (
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2">
+        {unassigned.length > 0 && (
           <select
             className="h-8 text-xs rounded-md border border-slate-200 bg-white text-slate-700 px-2 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400"
             defaultValue=""
@@ -148,14 +200,31 @@ function SubjectManager({ filiere }: { filiere: Filiere }) {
             <option value="">+ Ajouter une matière…</option>
             {unassigned.map(s => <option key={s.id} value={s.id}>{s.name_fr}</option>)}
           </select>
-        </div>
-      )}
+        )}
+        {allFilieres.length > 1 && (
+          <button
+            title="Copier les matières d'une autre filière"
+            onClick={() => setCopyOpen(true)}
+            className="flex items-center gap-1.5 h-8 px-2.5 text-xs rounded-md border border-slate-200 bg-white text-slate-500 hover:text-indigo-600 hover:border-indigo-300 transition-colors"
+          >
+            <Copy size={11} /> Copier depuis…
+          </button>
+        )}
+      </div>
+
+      <CopySubjectsModal
+        open={copyOpen}
+        onClose={() => setCopyOpen(false)}
+        filiere={filiere}
+        allFilieres={allFilieres}
+      />
     </div>
   )
 }
 
-function FiliereCard({ filiere, onEdit, onDelete }: {
+function FiliereCard({ filiere, allFilieres, onEdit, onDelete }: {
   filiere: Filiere
+  allFilieres: Filiere[]
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -191,7 +260,7 @@ function FiliereCard({ filiere, onEdit, onDelete }: {
 
       {expanded && (
         <div className="px-5 pb-4 border-t border-slate-100">
-          <SubjectManager filiere={filiere} />
+          <SubjectManager filiere={filiere} allFilieres={allFilieres} />
         </div>
       )}
     </div>
@@ -247,6 +316,7 @@ export default function FilieresGlobalPage() {
             <FiliereCard
               key={f.id}
               filiere={f}
+              allFilieres={filieres}
               onEdit={() => { setEditing(f); setModalOpen(true) }}
               onDelete={() => setDeleting(f)}
             />

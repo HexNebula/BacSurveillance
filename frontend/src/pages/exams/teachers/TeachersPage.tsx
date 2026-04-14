@@ -43,6 +43,8 @@ function EnrollModal({ open, onClose, examId, enrolledIds }: {
   const enrollTeacher = useEnrollTeacher(examId)
   const toast = useToast()
   const [search, setSearch] = useState('')
+  const [enrollingId, setEnrollingId] = useState<number | null>(null)
+  const [enrollingAll, setEnrollingAll] = useState(false)
 
   const available = allTeachers.filter(t =>
     !enrolledIds.has(t.id) &&
@@ -53,21 +55,52 @@ function EnrollModal({ open, onClose, examId, enrolledIds }: {
   )
 
   const handleEnroll = (teacher: Teacher) => {
+    setEnrollingId(teacher.id)
     enrollTeacher.mutate(teacher.id, {
-      onSuccess: () => toast.success(`${teacher.name_fr} ajouté à l'examen`),
-      onError: () => toast.error('Erreur lors de l\'ajout'),
+      onSuccess: () => { setEnrollingId(null); toast.success(`${teacher.name_fr} ajouté à l'examen`) },
+      onError: () => { setEnrollingId(null); toast.error('Erreur lors de l\'ajout') },
     })
+  }
+
+  const handleEnrollAll = async () => {
+    const toEnroll = allTeachers.filter(t => !enrolledIds.has(t.id))
+    if (toEnroll.length === 0) return
+    setEnrollingAll(true)
+    let added = 0
+    for (const t of toEnroll) {
+      await new Promise<void>(resolve => {
+        enrollTeacher.mutate(t.id, { onSuccess: () => { added++; resolve() }, onError: () => resolve() })
+      })
+    }
+    setEnrollingAll(false)
+    toast.success(`${added} surveillant${added !== 1 ? 's' : ''} ajouté${added !== 1 ? 's' : ''} à l'examen`)
   }
 
   return (
     <Modal open={open} onClose={onClose} title="Ajouter un surveillant" size="lg">
       <div className="flex flex-col gap-4">
-        <Input
-          placeholder="Rechercher par nom, CIN, établissement…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          autoFocus
-        />
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <Input
+              placeholder="Rechercher par nom, CIN, établissement…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              autoFocus
+            />
+          </div>
+          {allTeachers.filter(t => !enrolledIds.has(t.id)).length > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<UserPlus size={13} />}
+              loading={enrollingAll}
+              disabled={enrollingId !== null}
+              onClick={handleEnrollAll}
+            >
+              Ajouter tous
+            </Button>
+          )}
+        </div>
 
         {available.length === 0 ? (
           <p className="text-sm text-slate-400 text-center py-6">
@@ -88,7 +121,8 @@ function EnrollModal({ open, onClose, examId, enrolledIds }: {
                   variant="primary"
                   size="sm"
                   icon={<UserPlus size={13} />}
-                  loading={enrollTeacher.isPending}
+                  loading={enrollingId === t.id}
+                  disabled={enrollingId !== null && enrollingId !== t.id || enrollingAll}
                   onClick={() => handleEnroll(t)}
                 >
                   Ajouter

@@ -126,6 +126,16 @@ export function useDeleteExamSlot() {
   })
 }
 
+export function useCopySlots(examId: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ targetEfId, sourceEfId }: { targetEfId: number; sourceEfId: number }) =>
+      schedulingApi.copySlots(targetEfId, sourceEfId),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ['exams', examId, 'slots'] }),
+  })
+}
+
 // ── Room-Slot Assignments ─────────────────────────────────────────────────────
 
 export function useRoomSlotAssignments(slotId: number) {

@@ -86,10 +86,10 @@ export function useDeleteSubject() {
 
 // ── Filieres ──────────────────────────────────────────────────────────────────
 
-export function useFilieres() {
+export function useFilieres(level?: string) {
   return useQuery({
-    queryKey: ['center', 'filieres'],
-    queryFn: centerApi.getFilieres,
+    queryKey: ['center', 'filieres', level ?? 'all'],
+    queryFn: () => centerApi.getFilieres(level),
   })
 }
 
@@ -131,6 +131,15 @@ export function useRemoveFiliereSubject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: centerApi.removeFiliereSubject,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['center', 'filieres'] }),
+  })
+}
+
+export function useCopyFiliereSubjects() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ targetId, sourceId }: { targetId: number; sourceId: number }) =>
+      centerApi.copyFiliereSubjects(targetId, sourceId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['center', 'filieres'] }),
   })
 }

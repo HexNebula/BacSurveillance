@@ -1,12 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Play, AlertTriangle, CheckCircle2, Pencil, LayoutList, Users, CheckCheck, Lock } from 'lucide-react'
-import type { RoomAssignment, TeacherScheduleRow, TeacherSlotCell } from '../../../types'
+import type { RoomAssignment, TeacherScheduleRow, TeacherSlotCell, WorkloadLedger } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
 import {
   useRunAssignment, useRoomAssignments, useUpdateRoomAssignment,
-  useExamTeachers, useTeacherSchedule,
+  useExamTeachers, useTeacherSchedule, useWorkload,
 } from '../../../hooks/useAssignment'
-import { useExam, useUpdateExam } from '../../../hooks/useExam'
+import { useExam, useExams, useUpdateExam } from '../../../hooks/useExam'
 import { useToast } from '../../../hooks/useToast'
 import { PageHeader } from '../../../components/ui/PageHeader'
 import { Button } from '../../../components/ui/Button'
@@ -36,6 +36,11 @@ function OverrideModal({ open, onClose, assignment, examId }: {
 
   const [sup1, setSup1] = useState(assignment.supervisor_1_id?.toString() ?? '')
   const [sup2, setSup2] = useState(assignment.supervisor_2_id?.toString() ?? '')
+
+  useEffect(() => {
+    setSup1(assignment.supervisor_1_id?.toString() ?? '')
+    setSup2(assignment.supervisor_2_id?.toString() ?? '')
+  }, [assignment.id])
 
   const handleSave = () => {
     updateRA.mutate(
@@ -157,75 +162,117 @@ function RolePill({ cell }: { cell: TeacherSlotCell }) {
   return null
 }
 
-// Avatar colour cycles through a palette keyed by ordinal/index
-const AVATAR_COLORS = [
-  'bg-indigo-500', 'bg-violet-500', 'bg-sky-500', 'bg-emerald-500',
-  'bg-rose-500',   'bg-amber-500',  'bg-teal-500', 'bg-pink-500',
-]
-
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
   if (parts.length === 1) return parts[0][0].toUpperCase()
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
-function TeacherCard({ row, index }: { row: TeacherScheduleRow; index: number }) {
-  const active      = row.cells.filter(c => c.role !== null)
-  const avatarColor = AVATAR_COLORS[index % AVATAR_COLORS.length]
-  const total       = row.total_supervisor + row.total_reserve + row.total_madaoum
+function MiniBar({ value, max, color }: { value: number; max: number; color: string }) {
+  const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div className={cn('h-full rounded-full transition-all', color)} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs font-semibold text-slate-600 w-4 text-right">{value}</span>
+    </div>
+  )
+}
+
+function TeacherCard({ row, ledger }: { row: TeacherScheduleRow; ledger: WorkloadLedger | undefined }) {
+  const active    = row.cells.filter(c => c.role !== null)
+  const examTotal = row.total_supervisor + row.total_reserve + row.total_madaoum
+  const isFemale  = row.gender === 'F'
+
+  const bannerGradient = isFemale
+    ? 'from-rose-400 via-pink-500 to-fuchsia-500'
+    : 'from-indigo-500 via-violet-500 to-purple-600'
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-      {/* Card header */}
-      <div className="flex items-center gap-4 px-5 py-4 border-b border-slate-100">
-        {/* Avatar */}
-        <div className={cn('w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-white font-bold text-sm', avatarColor)}>
+
+      {/* Banner with initials */}
+      <div className={cn('bg-gradient-to-br relative flex flex-col items-center justify-center py-7 gap-2', bannerGradient)}>
+        <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white font-bold text-2xl shadow-inner">
           {initials(row.name_fr)}
         </div>
-        {/* Name + meta */}
-        <div className="flex-1 min-w-0">
-          <div className="font-semibold text-slate-800 text-sm leading-tight truncate">{row.name_fr}</div>
-          <div className="text-xs text-slate-400 mt-0.5 font-mono">{row.cin}</div>
+        <div className="text-center px-4">
+          <div className="font-bold text-white text-sm leading-tight">{row.name_fr}</div>
+          <div className="text-white/70 text-xs font-mono mt-0.5">{row.cin}</div>
         </div>
-        {/* Ordinal */}
-        {row.ordinal != null && (
-          <span className="text-xs font-bold text-slate-300 shrink-0">#{row.ordinal}</span>
+        {row.school && (
+          <div className="absolute bottom-2 right-3 text-[10px] text-white/50 truncate max-w-[120px] text-right">
+            {row.school}
+          </div>
         )}
       </div>
 
-      {/* Summary counts */}
-      <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
-        <div className="flex flex-col items-center py-3 gap-0.5">
-          <span className="text-lg font-bold text-indigo-600 leading-none">{row.total_supervisor}</span>
-          <span className="text-[10px] text-slate-400 uppercase tracking-wide">Surv.</span>
+      {/* Stats row */}
+      <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100">
+
+        {/* This exam */}
+        <div className="px-4 py-3">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Cet examen</p>
+          <div className="flex items-end gap-3">
+            <div className="flex flex-col items-center">
+              <span className="text-xl font-bold text-indigo-600 leading-none">{row.total_supervisor}</span>
+              <span className="text-[9px] text-slate-400 mt-0.5">Surv.</span>
+            </div>
+            <div className="flex flex-col items-center">
+              <span className="text-xl font-bold text-amber-500 leading-none">{row.total_reserve}</span>
+              <span className="text-[9px] text-slate-400 mt-0.5">Rés.</span>
+            </div>
+            <div className="flex flex-col items-center">
+              <span className="text-xl font-bold text-emerald-500 leading-none">{row.total_madaoum}</span>
+              <span className="text-[9px] text-slate-400 mt-0.5">Perm.</span>
+            </div>
+          </div>
         </div>
-        <div className="flex flex-col items-center py-3 gap-0.5">
-          <span className="text-lg font-bold text-amber-500 leading-none">{row.total_reserve}</span>
-          <span className="text-[10px] text-slate-400 uppercase tracking-wide">Rés.</span>
-        </div>
-        <div className="flex flex-col items-center py-3 gap-0.5">
-          <span className="text-lg font-bold text-emerald-500 leading-none">{row.total_madaoum}</span>
-          <span className="text-[10px] text-slate-400 uppercase tracking-wide">Perm.</span>
+
+        {/* Year totals */}
+        <div className="px-4 py-3">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Cette année</p>
+          {ledger ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between mb-0.5">
+                <span className="text-xl font-bold text-slate-700 leading-none">{ledger.total_count}</span>
+                <span className="text-[10px] text-slate-400">séances</span>
+              </div>
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-slate-400 w-7">1BAC</span>
+                  <MiniBar value={ledger.bac1_count} max={ledger.total_count} color="bg-indigo-400" />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-slate-400 w-7">2BAC</span>
+                  <MiniBar value={ledger.bac2_count} max={ledger.total_count} color="bg-violet-400" />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <span className="text-xs text-slate-300">—</span>
+          )}
         </div>
       </div>
 
-      {/* Slot assignments */}
+      {/* Slot pills */}
       <div className="px-4 py-3 flex-1">
         {active.length === 0 ? (
           <p className="text-xs text-slate-300 text-center py-2">Non affecté</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {active.map(cell => (
               <div
                 key={cell.slot_id}
                 className={cn(
-                  'flex flex-col items-center gap-1 rounded-xl px-3 py-2 border text-center',
+                  'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 border text-center',
                   cell.role === 'SUPERVISOR' ? 'bg-indigo-50 border-indigo-200' :
                   cell.role === 'RESERVE'    ? 'bg-amber-50 border-amber-200'   :
                                                'bg-emerald-50 border-emerald-200',
                 )}
               >
-                <span className="text-[11px] font-bold text-slate-600 leading-none">
+                <span className="text-[11px] font-semibold text-slate-700 leading-none">
                   {slotLabel(cell.day, cell.shift, cell.slot_order)}
                 </span>
                 <RolePill cell={cell} />
@@ -235,11 +282,11 @@ function TeacherCard({ row, index }: { row: TeacherScheduleRow; index: number })
         )}
       </div>
 
-      {/* Footer total */}
-      {total > 0 && (
-        <div className="px-5 py-2.5 border-t border-slate-100 bg-slate-50">
-          <span className="text-xs text-slate-500">
-            <strong className="text-slate-700">{total}</strong> séance{total > 1 ? 's' : ''} au total
+      {/* Footer */}
+      {examTotal > 0 && (
+        <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between">
+          <span className="text-[11px] text-slate-400">
+            <strong className="text-slate-600">{examTotal}</strong> séance{examTotal > 1 ? 's' : ''} cet examen
           </span>
         </div>
       )}
@@ -247,8 +294,11 @@ function TeacherCard({ row, index }: { row: TeacherScheduleRow; index: number })
   )
 }
 
-function TeacherView({ examId }: { examId: number }) {
-  const { data, isLoading } = useTeacherSchedule(examId)
+function TeacherView({ examId, year }: { examId: number; year: string }) {
+  const { data, isLoading }        = useTeacherSchedule(examId)
+  const { data: workload = [] }    = useWorkload(year)
+
+  const ledgerByCin = Object.fromEntries(workload.map(l => [l.cin, l]))
 
   if (isLoading) return <div className="flex justify-center py-10"><Spinner size={20} className="text-indigo-500" /></div>
   if (!data || data.teachers.length === 0) return (
@@ -256,9 +306,9 @@ function TeacherView({ examId }: { examId: number }) {
   )
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-      {data.teachers.map((row, i) => (
-        <TeacherCard key={row.teacher_id} row={row} index={i} />
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {data.teachers.map(row => (
+        <TeacherCard key={row.teacher_id} row={row} ledger={ledgerByCin[row.cin]} />
       ))}
     </div>
   )
@@ -272,8 +322,25 @@ export default function DistributionPage() {
   const { examId }    = useActiveExam()
   const runAssignment = useRunAssignment()
   const updateExam    = useUpdateExam()
-  const { data: exam } = useExam(examId)
+  const { data: exam }      = useExam(examId)
+  const { data: allExams = [] } = useExams()
   const toast         = useToast()
+
+  // ── Prerequisite gate ───────────────────────────────────────────────────────
+  const canRun = (() => {
+    if (!exam) return false
+    if (exam.level === 'BAC1') return true
+    if (exam.level === 'BAC2_NORMALE') {
+      const bac1 = allExams.find(e => e.year === exam.year && e.level === 'BAC1')
+      return !!bac1 && bac1.status !== 'DRAFT'
+    }
+    // BAC2_RATTRAPAGE — independent, always allowed
+    return true
+  })()
+
+  const prereqMessage = !canRun && exam?.level === 'BAC2_NORMALE'
+    ? `La distribution 1BAC ${exam.year} doit être lancée avant cette session.`
+    : null
 
   const [confirmOpen, setConfirmOpen]       = useState(false)
   const [confirmStatus, setConfirmStatus]   = useState<'ACTIVE' | 'VALIDATED' | null>(null)
@@ -335,11 +402,20 @@ export default function DistributionPage() {
           icon={runAssignment.isPending ? undefined : <Play size={16} />}
           onClick={() => setConfirmOpen(true)}
           loading={runAssignment.isPending}
-          className="shrink-0 bg-white text-indigo-600 hover:bg-indigo-50 border-0 shadow-lg"
+          disabled={!canRun}
+          className="shrink-0 bg-white text-indigo-600 hover:bg-indigo-50 border-0 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Lancer la distribution
         </Button>
       </div>
+
+      {/* Prerequisite gate banner */}
+      {prereqMessage && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 mb-6">
+          <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+          <p className="text-sm text-amber-800">{prereqMessage}</p>
+        </div>
+      )}
 
       {/* Warnings / success */}
       {lastResult && (
@@ -429,7 +505,7 @@ export default function DistributionPage() {
         </button>
       </div>
 
-      {activeTab === 'rooms' ? <RoomView examId={examId} /> : <TeacherView examId={examId} />}
+      {activeTab === 'rooms' ? <RoomView examId={examId} /> : <TeacherView examId={examId} year={exam?.year ?? ''} />}
 
       <ConfirmDialog
         open={confirmOpen}

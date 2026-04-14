@@ -6,6 +6,7 @@ import { Modal } from '../../components/ui/Modal'
 import { Input } from '../../components/ui/Input'
 import { Select } from '../../components/ui/Select'
 import { Button } from '../../components/ui/Button'
+import { DatePicker } from '../../components/ui/DatePicker'
 
 interface Props {
   open: boolean
@@ -51,8 +52,17 @@ export function CreateExamModal({ open, onClose, onCreated }: Props) {
     })
   }
 
-  const valid = form.year.trim() && form.name_fr.trim() && form.start_date && form.end_date &&
-    form.start_date <= form.end_date
+  const dateError = form.start_date && form.end_date && form.end_date < form.start_date
+    ? 'La date de fin doit être après la date de début'
+    : undefined
+
+  const valid = form.year.trim() && form.name_fr.trim() && form.start_date && form.end_date && !dateError
+
+  // When start date changes, clear end date if it became invalid
+  const handleStartDate = (value: string) => {
+    set('start_date', value)
+    if (form.end_date && form.end_date < value) set('end_date', '')
+  }
 
   return (
     <Modal open={open} onClose={onClose} title="Créer un examen" size="md">
@@ -83,17 +93,18 @@ export function CreateExamModal({ open, onClose, onCreated }: Props) {
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider -mb-2">Période</p>
 
         <div className="grid grid-cols-2 gap-4">
-          <Input
+          <DatePicker
             label="Date de début"
-            type="date"
             value={form.start_date}
-            onChange={e => set('start_date', e.target.value)}
+            onChange={handleStartDate}
           />
-          <Input
+          <DatePicker
             label="Date de fin"
-            type="date"
             value={form.end_date}
-            onChange={e => set('end_date', e.target.value)}
+            min={form.start_date || undefined}
+            onChange={v => set('end_date', v)}
+            error={dateError}
+            onDisabledDayClick={() => toast.error('La date de fin ne peut pas être avant la date de début')}
           />
         </div>
 

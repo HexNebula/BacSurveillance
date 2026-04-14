@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import type { TeacherExemption, ExemptionTypeEnum } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
@@ -175,7 +175,7 @@ export default function ConfigPage() {
   const [deleting, setDeleting]       = useState<TeacherExemption | null>(null)
   const [maxReserves, setMaxReserves] = useState<number | null>(null)
 
-  if (exam && maxReserves === null) setMaxReserves(exam.max_reserves)
+  useEffect(() => { if (exam) setMaxReserves(exam.max_reserves) }, [exam?.max_reserves])
 
   const teacherMap  = Object.fromEntries(teachers.map(t => [t.id, t.name_fr]))
   const filiereMap  = Object.fromEntries(filieres.map(f => [f.id, f.name_fr]))

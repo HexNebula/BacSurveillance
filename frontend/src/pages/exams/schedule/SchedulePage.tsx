@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import * as Switch from '@radix-ui/react-switch'
+import { Copy } from 'lucide-react'
 import type { ExamSlot } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
 import {
@@ -9,10 +10,14 @@ import {
   useCreateExamSlot,
   useUpdateExamSlot,
   useDeleteExamSlot,
+  useCopySlots,
 } from '../../../hooks/useExam'
 import { useFilieres, useSubjects } from '../../../hooks/useCenter'
 import { useToast } from '../../../hooks/useToast'
 import { PageHeader } from '../../../components/ui/PageHeader'
+import { Button } from '../../../components/ui/Button'
+import { Modal } from '../../../components/ui/Modal'
+import { Select } from '../../../components/ui/Select'
 import { Spinner } from '../../../components/ui/Spinner'
 import { cn } from '../../../lib/utils'
 
@@ -142,6 +147,68 @@ function ScheduleCell({ slot, examFiliereId, day, shift, slotOrder, examId, subj
   )
 }
 
+// ── Copy-from modal ───────────────────────────────────────────────────────────
+
+function CopyFromModal({ open, onClose, targetEf, examFilieres, filiereMap, examId }: {
+  open: boolean
+  onClose: () => void
+  targetEf: { id: number; filiere_id: number }
+  examFilieres: { id: number; filiere_id: number }[]
+  filiereMap: Record<number, { name_fr: string }>
+  examId: number
+}) {
+  const copySlots = useCopySlots(examId)
+  const toast     = useToast()
+  const [sourceId, setSourceId] = useState('')
+
+  const options = examFilieres
+    .filter(ef => ef.id !== targetEf.id)
+    .map(ef => ({ value: ef.id, label: filiereMap[ef.filiere_id]?.name_fr ?? `Filière #${ef.filiere_id}` }))
+
+  const targetName = filiereMap[targetEf.filiere_id]?.name_fr ?? `Filière #${targetEf.filiere_id}`
+
+  const handleClose = () => { setSourceId(''); onClose() }
+
+  const handleCopy = () => {
+    copySlots.mutate({ targetEfId: targetEf.id, sourceEfId: Number(sourceId) }, {
+      onSuccess: () => {
+        toast.success(`Planning copié vers "${targetName}"`)
+        handleClose()
+      },
+      onError: () => toast.error('Erreur lors de la copie'),
+    })
+  }
+
+  return (
+    <Modal open={open} onClose={handleClose} title={`Copier le planning → ${targetName}`} size="sm">
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-slate-500">
+          Toutes les séances de la filière source seront copiées vers <strong>{targetName}</strong>.
+          Les séances existantes de cette filière seront remplacées.
+        </p>
+        <Select
+          label="Copier depuis"
+          placeholder="— choisir une filière source —"
+          value={sourceId}
+          options={options}
+          onChange={e => setSourceId(e.target.value)}
+        />
+        <div className="flex justify-end gap-2 mt-1">
+          <Button variant="secondary" onClick={handleClose}>Annuler</Button>
+          <Button
+            variant="primary"
+            onClick={handleCopy}
+            loading={copySlots.isPending}
+            disabled={!sourceId}
+          >
+            Copier le planning
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ── Day grid (one day at a time) ──────────────────────────────────────────────
 
 interface DayGridProps {
@@ -154,65 +221,93 @@ interface DayGridProps {
 }
 
 function DayGrid({ day, examId, examFilieres, filiereMap, slotMap, subjectOptions }: DayGridProps) {
+  const [copyTarget, setCopyTarget] = useState<{ id: number; filiere_id: number } | null>(null)
+
   return (
-    <div className="rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-      <table className="w-full border-collapse">
-        <thead>
-          {/* Shifts row */}
-          <tr>
-            <th className="w-44 bg-slate-800 border-b border-r border-slate-700" />
-            {SHIFTS.map(shift => (
-              <th
-                key={shift}
-                colSpan={2}
-                className="px-4 py-2.5 bg-slate-800 text-white text-xs font-semibold text-center border-b border-r border-slate-700"
-              >
-                {SHIFT_LABELS[shift]}
-              </th>
-            ))}
-          </tr>
-          {/* S1/S2 row */}
-          <tr>
-            <th className="px-4 py-2 bg-slate-700 text-slate-300 text-xs font-semibold text-left border-b border-r border-slate-600 w-44">
-              Filière
-            </th>
-            {SHIFTS.flatMap(shift =>
-              SLOT_ORDERS.map(order => (
+    <>
+      <div className="rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <table className="w-full border-collapse">
+          <thead>
+            {/* Shifts row */}
+            <tr>
+              <th className="w-52 bg-slate-800 border-b border-r border-slate-700" />
+              {SHIFTS.map(shift => (
                 <th
-                  key={`${shift}-S${order}`}
-                  className="px-4 py-2 bg-slate-700 text-slate-300 text-xs font-semibold text-center border-b border-r border-slate-600"
+                  key={shift}
+                  colSpan={2}
+                  className="px-4 py-2.5 bg-slate-800 text-white text-xs font-semibold text-center border-b border-r border-slate-700"
                 >
-                  S{order}
+                  {SHIFT_LABELS[shift]}
                 </th>
-              ))
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {examFilieres.map(ef => (
-            <tr key={ef.id}>
-              <td className="px-4 py-3 bg-slate-50 border-b border-r-2 border-slate-300 font-semibold text-sm text-indigo-700 whitespace-nowrap w-44">
-                {filiereMap[ef.filiere_id]?.name_fr ?? `Filière #${ef.filiere_id}`}
-              </td>
+              ))}
+            </tr>
+            {/* S1/S2 row */}
+            <tr>
+              <th className="px-4 py-2 bg-slate-700 text-slate-300 text-xs font-semibold text-left border-b border-r border-slate-600 w-52">
+                Filière
+              </th>
               {SHIFTS.flatMap(shift =>
                 SLOT_ORDERS.map(order => (
-                  <ScheduleCell
-                    key={`${ef.id}-${shift}-S${order}`}
-                    slot={slotMap[ef.id]?.[day]?.[shift]?.[order]}
-                    examFiliereId={ef.id}
-                    day={day}
-                    shift={shift}
-                    slotOrder={order}
-                    examId={examId}
-                    subjectOptions={subjectOptions}
-                  />
+                  <th
+                    key={`${shift}-S${order}`}
+                    className="px-4 py-2 bg-slate-700 text-slate-300 text-xs font-semibold text-center border-b border-r border-slate-600"
+                  >
+                    S{order}
+                  </th>
                 ))
               )}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {examFilieres.map(ef => (
+              <tr key={ef.id}>
+                <td className="px-3 py-3 bg-slate-50 border-b border-r-2 border-slate-300 w-52">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="font-semibold text-sm text-indigo-700 truncate">
+                      {filiereMap[ef.filiere_id]?.name_fr ?? `Filière #${ef.filiere_id}`}
+                    </span>
+                    {examFilieres.length > 1 && (
+                      <button
+                        title="Copier le planning d'une autre filière"
+                        onClick={() => setCopyTarget(ef)}
+                        className="shrink-0 p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                      >
+                        <Copy size={12} />
+                      </button>
+                    )}
+                  </div>
+                </td>
+                {SHIFTS.flatMap(shift =>
+                  SLOT_ORDERS.map(order => (
+                    <ScheduleCell
+                      key={`${ef.id}-${shift}-S${order}`}
+                      slot={slotMap[ef.id]?.[day]?.[shift]?.[order]}
+                      examFiliereId={ef.id}
+                      day={day}
+                      shift={shift}
+                      slotOrder={order}
+                      examId={examId}
+                      subjectOptions={subjectOptions}
+                    />
+                  ))
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {copyTarget && (
+        <CopyFromModal
+          open={!!copyTarget}
+          onClose={() => setCopyTarget(null)}
+          targetEf={copyTarget}
+          examFilieres={examFilieres}
+          filiereMap={filiereMap}
+          examId={examId}
+        />
+      )}
+    </>
   )
 }
 

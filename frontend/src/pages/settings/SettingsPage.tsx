@@ -92,15 +92,19 @@ function RoomsSection() {
 
   const handleSave = () => {
     const payload = { name: name.trim(), capacity: capacity ? Number(capacity) : undefined }
+    const onRoomError = (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg ?? 'Erreur')
+    }
     if (editing) {
       updateRoom.mutate({ id: editing.id, data: payload }, {
         onSuccess: () => { setModalOpen(false); toast.success('Salle modifiée') },
-        onError:   () => toast.error('Erreur'),
+        onError:   onRoomError,
       })
     } else {
       createRoom.mutate(payload, {
         onSuccess: () => { setModalOpen(false); toast.success('Salle ajoutée') },
-        onError:   () => toast.error('Erreur'),
+        onError:   onRoomError,
       })
     }
   }
@@ -172,15 +176,19 @@ function SubjectsSection() {
 
   const handleSave = () => {
     const payload = { name_fr: nameFr.trim(), name_ar: '' }
+    const onSubjectError = (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg ?? 'Erreur')
+    }
     if (editing) {
       updateSubject.mutate({ id: editing.id, data: payload }, {
         onSuccess: () => { setModalOpen(false); toast.success('Matière modifiée') },
-        onError:   () => toast.error('Erreur'),
+        onError:   onSubjectError,
       })
     } else {
       createSubject.mutate(payload, {
         onSuccess: () => { setModalOpen(false); toast.success('Matière ajoutée') },
-        onError:   () => toast.error('Erreur'),
+        onError:   onSubjectError,
       })
     }
   }

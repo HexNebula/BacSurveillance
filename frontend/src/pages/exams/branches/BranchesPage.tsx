@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
 import type { ExamFiliere, Filiere } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
-import { useExamFilieres, useEnrollFiliere, useUpdateExamFiliere, useRemoveExamFiliere } from '../../../hooks/useExam'
+import { useExamFilieres, useEnrollFiliere, useUpdateExamFiliere, useRemoveExamFiliere, useExam } from '../../../hooks/useExam'
 import { useFilieres } from '../../../hooks/useCenter'
 import { useToast } from '../../../hooks/useToast'
 import { PageHeader } from '../../../components/ui/PageHeader'
@@ -83,7 +83,7 @@ function EnrollModal({ open, onClose, examId, filieres, enrolled }: {
               variant="primary"
               onClick={handleSave}
               loading={enrollFiliere.isPending}
-              disabled={!filiereId || !roomCount}
+              disabled={!filiereId || !roomCount || Number(roomCount) < 1}
             >
               Ajouter
             </Button>
@@ -103,6 +103,10 @@ function EditRoomModal({ open, onClose, examFiliere, filiereMap }: {
   const updateEF = useUpdateExamFiliere()
   const toast = useToast()
   const [roomCount, setRoomCount] = useState(examFiliere.room_count.toString())
+
+  useEffect(() => {
+    setRoomCount(examFiliere.room_count.toString())
+  }, [examFiliere.room_count])
 
   const filiere = filiereMap[examFiliere.filiere_id]
 
@@ -128,7 +132,7 @@ function EditRoomModal({ open, onClose, examFiliere, filiereMap }: {
         />
         <div className="flex justify-end gap-2 mt-1">
           <Button variant="secondary" onClick={onClose}>Annuler</Button>
-          <Button variant="primary" onClick={handleSave} loading={updateEF.isPending}>
+          <Button variant="primary" onClick={handleSave} loading={updateEF.isPending} disabled={!Number(roomCount) || Number(roomCount) < 1}>
             Modifier
           </Button>
         </div>
@@ -139,8 +143,9 @@ function EditRoomModal({ open, onClose, examFiliere, filiereMap }: {
 
 export default function BranchesPage() {
   const { examId } = useActiveExam()
+  const { data: exam } = useExam(examId)
   const { data: examFilieres = [], isLoading: efLoading } = useExamFilieres(examId)
-  const { data: filieres = [], isLoading: fLoading } = useFilieres()
+  const { data: filieres = [], isLoading: fLoading } = useFilieres(exam?.level ?? undefined)
   const removeEF = useRemoveExamFiliere()
   const toast = useToast()
 

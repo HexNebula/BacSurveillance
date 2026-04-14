@@ -42,6 +42,7 @@ export interface Filiere {
   name_fr: string
   name_ar: string
   candidate_type: CandidateTypeEnum
+  level: 'BAC1' | 'BAC2' | null
   filiere_subjects: FiliereSubject[]
 }
 

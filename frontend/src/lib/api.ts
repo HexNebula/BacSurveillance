@@ -43,8 +43,8 @@ export const centerApi = {
     http.delete(`/center/subjects/${id}`),
 
   // Filieres
-  getFilieres: () =>
-    http.get<Filiere[]>('/center/filieres').then(r => r.data),
+  getFilieres: (level?: string) =>
+    http.get<Filiere[]>('/center/filieres', { params: level ? { level } : undefined }).then(r => r.data),
 
   createFiliere: (data: { name_fr: string; name_ar?: string; candidate_type?: string }) =>
     http.post<Filiere>('/center/filieres', data).then(r => r.data),
@@ -60,6 +60,9 @@ export const centerApi = {
 
   removeFiliereSubject: (fsId: number) =>
     http.delete(`/center/filiere-subjects/${fsId}`),
+
+  copyFiliereSubjects: (targetId: number, sourceId: number) =>
+    http.post<{ added: number }>(`/center/filieres/${targetId}/copy-subjects-from`, { source_filiere_id: sourceId }).then(r => r.data),
 }
 
 // ── Scheduling ────────────────────────────────────────────────────────────────
@@ -109,6 +112,9 @@ export const schedulingApi = {
 
   deleteExamSlot: (id: number) =>
     http.delete(`/scheduling/exam-slots/${id}`),
+
+  copySlots: (targetEfId: number, sourceEfId: number) =>
+    http.post<ExamSlot[]>(`/scheduling/exam-filieres/${targetEfId}/copy-slots-from`, { source_ef_id: sourceEfId }).then(r => r.data),
 
   // ExamFiliereRooms — rooms assigned once per filière
   getFiliereRooms: (efId: number) =>
