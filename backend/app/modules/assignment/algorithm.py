@@ -192,29 +192,106 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
     year  = exam.year
     level = exam.level
 
-    # ── 0. Clear previous run data ────────────────────────────────────────
+    # ── 0. Clear previous run data (with ledger rollback) ────────────────
     all_slot_ids: list[int] = [
         s.id for s in db.query(sm.ExamSlot.id).filter_by(exam_id=exam.id)
     ]
     if all_slot_ids:
+        # Build slot→shift lookup for correct ledger decrement
+        slot_shift_map: dict[int, ShiftEnum] = {
+            row.id: row.shift
+            for row in db.query(sm.ExamSlot.id, sm.ExamSlot.shift)
+                         .filter(sm.ExamSlot.id.in_(all_slot_ids))
+        }
+
+        # ── Rollback madaoume ledger ──────────────────────────────────────
+        old_madaoume = (
+            db.query(am.MadaoumeAssignment)
+            .filter(am.MadaoumeAssignment.exam_slot_id.in_(all_slot_ids))
+            .all()
+        )
+        if old_madaoume:
+            ma_cin_map = {
+                t.id: t.cin for t in db.query(am.Teacher).filter(
+                    am.Teacher.id.in_({ma.teacher_id for ma in old_madaoume})
+                )
+            }
+            for ma in old_madaoume:
+                cin   = ma_cin_map.get(ma.teacher_id)
+                shift = slot_shift_map.get(ma.exam_slot_id)
+                if cin and shift:
+                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+
+        # ── Rollback reserve ledger ───────────────────────────────────────
+        old_reserves = (
+            db.query(am.ReserveAssignment)
+            .filter(am.ReserveAssignment.exam_slot_id.in_(all_slot_ids))
+            .all()
+        )
+        if old_reserves:
+            res_cin_map = {
+                t.id: t.cin for t in db.query(am.Teacher).filter(
+                    am.Teacher.id.in_({ra.teacher_id for ra in old_reserves})
+                )
+            }
+            for ra in old_reserves:
+                cin   = res_cin_map.get(ra.teacher_id)
+                shift = slot_shift_map.get(ra.exam_slot_id)
+                if cin and shift:
+                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+
+        # ── Rollback room supervisor ledger ──────────────────────────────
         old_rsa_ids = [
             r.id for r in db.query(sm.RoomSlotAssignment.id).filter(
                 sm.RoomSlotAssignment.exam_slot_id.in_(all_slot_ids)
             )
         ]
         if old_rsa_ids:
+            rsa_slot_map: dict[int, int] = {
+                row.id: row.exam_slot_id
+                for row in db.query(sm.RoomSlotAssignment.id, sm.RoomSlotAssignment.exam_slot_id)
+                             .filter(sm.RoomSlotAssignment.id.in_(old_rsa_ids))
+            }
+            old_ras = (
+                db.query(am.RoomAssignment)
+                .filter(am.RoomAssignment.room_slot_assignment_id.in_(old_rsa_ids))
+                .all()
+            )
+            if old_ras:
+                all_sup_ids = {
+                    sid for ra in old_ras
+                    for sid in (ra.supervisor_1_id, ra.supervisor_2_id) if sid
+                }
+                sup_cin_map = {
+                    t.id: t.cin for t in db.query(am.Teacher).filter(
+                        am.Teacher.id.in_(all_sup_ids)
+                    )
+                }
+                for ra in old_ras:
+                    slot_id = rsa_slot_map.get(ra.room_slot_assignment_id)
+                    shift   = slot_shift_map.get(slot_id) if slot_id else None
+                    if not shift:
+                        continue
+                    for sup_id in (ra.supervisor_1_id, ra.supervisor_2_id):
+                        if sup_id:
+                            cin = sup_cin_map.get(sup_id)
+                            if cin:
+                                _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+
             db.query(am.RoomAssignment).filter(
                 am.RoomAssignment.room_slot_assignment_id.in_(old_rsa_ids)
             ).delete(synchronize_session=False)
             db.query(sm.RoomSlotAssignment).filter(
                 sm.RoomSlotAssignment.id.in_(old_rsa_ids)
             ).delete(synchronize_session=False)
+
         db.query(am.ReserveAssignment).filter(
             am.ReserveAssignment.exam_slot_id.in_(all_slot_ids)
         ).delete(synchronize_session=False)
         db.query(am.MadaoumeAssignment).filter(
             am.MadaoumeAssignment.exam_slot_id.in_(all_slot_ids)
         ).delete(synchronize_session=False)
+
     db.query(am.DuoHistory).filter_by(exam_id=exam.id).delete(synchronize_session=False)
     db.flush()
 
@@ -309,7 +386,11 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
 
         # ── 1. Pick المداوم ──────────────────────────────────────────────
         subject_teachers = sorted(
-            [t for t in all_teachers if t.subject_id == slot.subject_id],
+            [
+                t for t in all_teachers
+                if t.subject_id == slot.subject_id
+                and not _is_exempted(exemption_index, t.id, slot)
+            ],
             key=lambda t: _sort_key(_get_or_create_ledger(db, t.cin, year), shift, level),
         )
         madaoum_id: int | None = None
