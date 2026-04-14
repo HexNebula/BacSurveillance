@@ -91,15 +91,17 @@ class ExamSlot(Base):
         UniqueConstraint("exam_id", "exam_filiere_id", "day", "shift", "slot_order", name="uq_slot"),
     )
 
-    id:               Mapped[int]       = mapped_column(Integer, primary_key=True)
-    exam_id:          Mapped[int]       = mapped_column(ForeignKey("exams.id"), nullable=False)
-    exam_filiere_id:  Mapped[int]       = mapped_column(ForeignKey("exam_filieres.id"), nullable=False)
-    subject_id:       Mapped[int]       = mapped_column(ForeignKey("subjects.id"), nullable=False)
-    day:              Mapped[int]       = mapped_column(Integer, nullable=False)
-    shift:            Mapped[ShiftEnum] = mapped_column(Enum(ShiftEnum), nullable=False)
-    slot_order:       Mapped[int]       = mapped_column(Integer, default=1)   # 1 = S1, 2 = S2
-    is_active:        Mapped[bool]      = mapped_column(Boolean, default=True)
+    id:               Mapped[int]        = mapped_column(Integer, primary_key=True)
+    exam_id:          Mapped[int]        = mapped_column(ForeignKey("exams.id"), nullable=False)
+    exam_filiere_id:  Mapped[int]        = mapped_column(ForeignKey("exam_filieres.id"), nullable=False)
+    subject_id:       Mapped[int]        = mapped_column(ForeignKey("subjects.id"), nullable=False)
+    day:              Mapped[int]        = mapped_column(Integer, nullable=False)
+    shift:            Mapped[ShiftEnum]  = mapped_column(Enum(ShiftEnum), nullable=False)
+    slot_order:       Mapped[int]        = mapped_column(Integer, default=1)   # 1 = S1, 2 = S2
+    is_active:        Mapped[bool]       = mapped_column(Boolean, default=True)
     reserve_count:    Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_time:       Mapped[str | None] = mapped_column(String(5), nullable=True)   # "HH:MM"
+    end_time:         Mapped[str | None] = mapped_column(String(5), nullable=True)   # "HH:MM"
 
     exam:          Mapped["Exam"]         = relationship(back_populates="exam_slots")
     exam_filiere:  Mapped["ExamFiliere"]  = relationship(back_populates="exam_slots")

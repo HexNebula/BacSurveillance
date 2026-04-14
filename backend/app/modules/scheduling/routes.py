@@ -117,6 +117,15 @@ def copy_slots_from(ef_id: int, data: schemas.CopySlotsFrom, db: Session = Depen
 
 # ── ExamFiliereRooms ───────────────────────────────────────────────────────
 
+@router.get("/exams/{exam_id}/filiere-rooms", response_model=list[schemas.ExamFiliereRoomOut])
+def list_all_exam_filiere_rooms(exam_id: int, db: Session = Depends(get_db)):
+    """All room assignments across every filière of an exam."""
+    ef_ids = [ef.id for ef in crud.get_exam_filieres(db, exam_id)]
+    if not ef_ids:
+        return []
+    return db.query(sm.ExamFiliereRoom).filter(sm.ExamFiliereRoom.exam_filiere_id.in_(ef_ids)).all()
+
+
 @router.get("/exam-filieres/{ef_id}/rooms", response_model=list[schemas.ExamFiliereRoomOut])
 def list_filiere_rooms(ef_id: int, db: Session = Depends(get_db)):
     return crud.get_filiere_rooms(db, ef_id)

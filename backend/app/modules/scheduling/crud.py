@@ -143,7 +143,7 @@ def update_exam_slot(db: Session, slot_id: int, data: schemas.ExamSlotUpdate) ->
     obj = get_exam_slot(db, slot_id)
     if not obj:
         return None
-    for field, value in data.model_dump(exclude_none=True).items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(obj, field, value)
     db.commit()
     db.refresh(obj)
@@ -183,6 +183,8 @@ def copy_slots_from(
             slot_order=s.slot_order,
             is_active=s.is_active,
             reserve_count=s.reserve_count,
+            start_time=s.start_time,
+            end_time=s.end_time,
         )
         db.add(slot)
         new_slots.append(slot)

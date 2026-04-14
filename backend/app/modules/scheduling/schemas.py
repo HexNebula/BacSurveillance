@@ -86,6 +86,8 @@ class ExamSlotCreate(BaseModel):
     slot_order:      int = Field(default=1, ge=1)
     is_active:       bool = True
     reserve_count:   int | None = None
+    start_time:      str | None = None
+    end_time:        str | None = None
 
 class CopySlotsFrom(BaseModel):
     source_ef_id: int
@@ -97,6 +99,8 @@ class ExamSlotUpdate(BaseModel):
     slot_order:    int | None = None
     is_active:     bool | None = None
     reserve_count: int | None = None
+    start_time:    str | None = None
+    end_time:      str | None = None
 
 class ExamSlotOut(BaseModel):
     id:               int
@@ -108,6 +112,8 @@ class ExamSlotOut(BaseModel):
     slot_order:       int
     is_active:        bool
     reserve_count:    int | None
+    start_time:       str | None
+    end_time:         str | None
     model_config = {"from_attributes": True}
 
 
