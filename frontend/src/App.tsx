@@ -14,6 +14,7 @@ import DistributionPage    from './pages/exams/distribution/DistributionPage'
 import DocumentsPage       from './pages/documents/DocumentsPage'
 import TeachersGlobalPage  from './pages/teachers/TeachersGlobalPage'
 import FilieresGlobalPage  from './pages/filieres/FilieresGlobalPage'
+import WorkloadPage        from './pages/workload/WorkloadPage'
 
 const NotFound = () => (
   <div className="animate-fade-up" style={{ padding: '60px 32px', textAlign: 'center' }}>
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="documents"  element={<DocumentsPage      />} />
         <Route path="teachers"   element={<TeachersGlobalPage />} />
         <Route path="filieres"   element={<FilieresGlobalPage />} />
+        <Route path="workload"   element={<WorkloadPage       />} />
 
         {/* Exam nested routes */}
         <Route path="exams/:examId" element={<ExamLayout />}>

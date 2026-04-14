@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Play, AlertTriangle, CheckCircle2, Pencil, LayoutList, Users, CheckCheck, Lock } from 'lucide-react'
+import { Play, AlertTriangle, CheckCircle2, Pencil, LayoutList, Users, CheckCheck, Lock, Trash2 } from 'lucide-react'
 import type { RoomAssignment, TeacherScheduleRow, TeacherSlotCell, WorkloadLedger } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
 import {
-  useRunAssignment, useRoomAssignments, useUpdateRoomAssignment,
+  useRunAssignment, useResetAssignment, useRoomAssignments, useUpdateRoomAssignment,
   useExamTeachers, useTeacherSchedule, useWorkload,
 } from '../../../hooks/useAssignment'
 import { useExam, useExams, useUpdateExam } from '../../../hooks/useExam'
@@ -319,8 +319,9 @@ function TeacherView({ examId, year }: { examId: number; year: string }) {
 type ViewTab = 'rooms' | 'teachers'
 
 export default function DistributionPage() {
-  const { examId }    = useActiveExam()
-  const runAssignment = useRunAssignment()
+  const { examId }      = useActiveExam()
+  const runAssignment   = useRunAssignment()
+  const resetAssignment = useResetAssignment(examId)
   const updateExam    = useUpdateExam()
   const { data: exam }      = useExam(examId)
   const { data: allExams = [] } = useExams()
@@ -343,6 +344,7 @@ export default function DistributionPage() {
     : null
 
   const [confirmOpen, setConfirmOpen]       = useState(false)
+  const [resetOpen, setResetOpen]           = useState(false)
   const [confirmStatus, setConfirmStatus]   = useState<'ACTIVE' | 'VALIDATED' | null>(null)
   const [activeTab, setActiveTab]           = useState<ViewTab>('rooms')
   const [lastResult, setLastResult]   = useState<{

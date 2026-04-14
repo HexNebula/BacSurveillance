@@ -7,6 +7,7 @@ import {
   GraduationCap,
   Users,
   BookOpen,
+  BarChart2,
 } from 'lucide-react'
 import { cn } from '../lib/utils'
 
@@ -15,6 +16,7 @@ const nav = [
   { to: '/exams',      label: 'Examens',          icon: Calendar },
   { to: '/teachers',   label: 'Surveillants',     icon: Users },
   { to: '/filieres',   label: 'Filières',         icon: BookOpen },
+  { to: '/workload',   label: 'Répartition',       icon: BarChart2 },
   { to: '/documents',  label: 'Documents',        icon: FileText },
   { to: '/settings',   label: 'Paramètres',       icon: Settings },
 ]
