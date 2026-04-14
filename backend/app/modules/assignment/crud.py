@@ -2,6 +2,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.modules.assignment import models, schemas
+from app.modules.scheduling import models as sm
 
 
 # ── Teacher ────────────────────────────────────────────────────────────────
@@ -315,3 +316,109 @@ def get_teacher_schedule(db: Session, exam_id: int) -> schemas.TeacherScheduleOu
 
 def get_workload_ledger(db: Session, year: str) -> list[models.WorkloadLedger]:
     return db.query(models.WorkloadLedger).filter_by(year=year).order_by(models.WorkloadLedger.total_count.desc()).all()
+
+
+# ── Reset ──────────────────────────────────────────────────────────────────
+
+def reset_assignments(db: Session, exam: sm.Exam) -> None:
+    """
+    Clear all assignment outputs for an exam and roll back the workload ledger.
+    Mirrors the clearing block in algorithm.run_assignment().
+    """
+    from app.modules.assignment.algorithm import _get_or_create_ledger, _decrement_ledger
+
+    year  = exam.year
+    level = exam.level
+
+    all_slot_ids = [s.id for s in db.query(sm.ExamSlot.id).filter_by(exam_id=exam.id)]
+    if all_slot_ids:
+        slot_shift_map = {
+            row.id: row.shift
+            for row in db.query(sm.ExamSlot.id, sm.ExamSlot.shift)
+                         .filter(sm.ExamSlot.id.in_(all_slot_ids))
+        }
+
+        # Rollback madaoume ledger
+        old_madaoume = db.query(models.MadaoumeAssignment).filter(
+            models.MadaoumeAssignment.exam_slot_id.in_(all_slot_ids)
+        ).all()
+        if old_madaoume:
+            ma_cin_map = {
+                t.id: t.cin for t in db.query(models.Teacher).filter(
+                    models.Teacher.id.in_({ma.teacher_id for ma in old_madaoume})
+                )
+            }
+            for ma in old_madaoume:
+                cin   = ma_cin_map.get(ma.teacher_id)
+                shift = slot_shift_map.get(ma.exam_slot_id)
+                if cin and shift:
+                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+
+        # Rollback reserve ledger
+        old_reserves = db.query(models.ReserveAssignment).filter(
+            models.ReserveAssignment.exam_slot_id.in_(all_slot_ids)
+        ).all()
+        if old_reserves:
+            res_cin_map = {
+                t.id: t.cin for t in db.query(models.Teacher).filter(
+                    models.Teacher.id.in_({ra.teacher_id for ra in old_reserves})
+                )
+            }
+            for ra in old_reserves:
+                cin   = res_cin_map.get(ra.teacher_id)
+                shift = slot_shift_map.get(ra.exam_slot_id)
+                if cin and shift:
+                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+
+        # Rollback room supervisor ledger
+        old_rsa_ids = [
+            r.id for r in db.query(sm.RoomSlotAssignment.id).filter(
+                sm.RoomSlotAssignment.exam_slot_id.in_(all_slot_ids)
+            )
+        ]
+        if old_rsa_ids:
+            rsa_slot_map = {
+                row.id: row.exam_slot_id
+                for row in db.query(sm.RoomSlotAssignment.id, sm.RoomSlotAssignment.exam_slot_id)
+                             .filter(sm.RoomSlotAssignment.id.in_(old_rsa_ids))
+            }
+            old_ras = db.query(models.RoomAssignment).filter(
+                models.RoomAssignment.room_slot_assignment_id.in_(old_rsa_ids)
+            ).all()
+            if old_ras:
+                all_sup_ids = {
+                    sid for ra in old_ras
+                    for sid in (ra.supervisor_1_id, ra.supervisor_2_id) if sid
+                }
+                sup_cin_map = {
+                    t.id: t.cin for t in db.query(models.Teacher).filter(
+                        models.Teacher.id.in_(all_sup_ids)
+                    )
+                }
+                for ra in old_ras:
+                    slot_id = rsa_slot_map.get(ra.room_slot_assignment_id)
+                    shift   = slot_shift_map.get(slot_id) if slot_id else None
+                    if not shift:
+                        continue
+                    for sup_id in (ra.supervisor_1_id, ra.supervisor_2_id):
+                        if sup_id:
+                            cin = sup_cin_map.get(sup_id)
+                            if cin:
+                                _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+            db.query(models.RoomAssignment).filter(
+                models.RoomAssignment.room_slot_assignment_id.in_(old_rsa_ids)
+            ).delete(synchronize_session=False)
+            db.query(sm.RoomSlotAssignment).filter(
+                sm.RoomSlotAssignment.id.in_(old_rsa_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(models.ReserveAssignment).filter(
+            models.ReserveAssignment.exam_slot_id.in_(all_slot_ids)
+        ).delete(synchronize_session=False)
+        db.query(models.MadaoumeAssignment).filter(
+            models.MadaoumeAssignment.exam_slot_id.in_(all_slot_ids)
+        ).delete(synchronize_session=False)
+
+    db.query(models.DuoHistory).filter_by(exam_id=exam.id).delete(synchronize_session=False)
+    db.flush()
+    db.commit()

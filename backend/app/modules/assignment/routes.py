@@ -133,6 +133,18 @@ def run(exam_id: int, db: Session = Depends(get_db)):
     )
 
 
+@router.post("/exams/{exam_id}/reset", status_code=204)
+def reset(exam_id: int, db: Session = Depends(get_db)):
+    exam = get_exam(db, exam_id)
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    if exam.status == ExamStatusEnum.VALIDATED:
+        raise HTTPException(status_code=409, detail="Un examen validé ne peut pas être réinitialisé.")
+    crud.reset_assignments(db, exam)
+    exam.status = ExamStatusEnum.DRAFT
+    db.commit()
+
+
 # ── Room Assignments (review + override) ───────────────────────────────────
 
 @router.get("/exams/{exam_id}/room-assignments", response_model=list[schemas.RoomAssignmentRich])
