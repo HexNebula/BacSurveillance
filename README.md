@@ -71,7 +71,7 @@ Le projet suit une architecture modulaire :
 La méthode la plus simple pour lancer l'ensemble de la pile :
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/HexNebula/BacSurveillance
 cd exam-surveillance
 docker-compose up --build
 ```
