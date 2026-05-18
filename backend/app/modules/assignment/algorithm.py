@@ -51,7 +51,7 @@ def _get_or_create_ledger(db: Session, cin: str, year: str) -> am.WorkloadLedger
     return ledger
 
 
-def _increment_ledger(ledger: am.WorkloadLedger, shift: ShiftEnum, level: LevelEnum):
+def _increment_ledger(ledger: am.WorkloadLedger, shift: ShiftEnum, level: LevelEnum, role: str = "SUPERVISOR"):
     ledger.total_count += 1
     if level == LevelEnum.BAC1:
         ledger.bac1_count += 1
@@ -62,8 +62,13 @@ def _increment_ledger(ledger: am.WorkloadLedger, shift: ShiftEnum, level: LevelE
     else:
         ledger.afternoon_count += 1
 
+    if role == "MADAOUM":
+        ledger.madaoume_count += 1
+    elif role == "RESERVE":
+        ledger.reserve_count += 1
 
-def _decrement_ledger(ledger: am.WorkloadLedger, shift: ShiftEnum, level: LevelEnum):
+
+def _decrement_ledger(ledger: am.WorkloadLedger, shift: ShiftEnum, level: LevelEnum, role: str = "SUPERVISOR"):
     ledger.total_count = max(0, ledger.total_count - 1)
     if level == LevelEnum.BAC1:
         ledger.bac1_count = max(0, ledger.bac1_count - 1)
@@ -74,13 +79,24 @@ def _decrement_ledger(ledger: am.WorkloadLedger, shift: ShiftEnum, level: LevelE
     else:
         ledger.afternoon_count = max(0, ledger.afternoon_count - 1)
 
+    if role == "MADAOUM":
+        ledger.madaoume_count = max(0, ledger.madaoume_count - 1)
+    elif role == "RESERVE":
+        ledger.reserve_count = max(0, ledger.reserve_count - 1)
+
 
 # ── Sort key ───────────────────────────────────────────────────────────────
 
-def _sort_key(ledger: am.WorkloadLedger, shift: ShiftEnum, level: LevelEnum) -> tuple:
+def _sort_key(ledger: am.WorkloadLedger, shift: ShiftEnum, level: LevelEnum, tie_breaker: int = 0, role_penalty: bool = False) -> tuple:
     level_count = ledger.bac1_count if level == LevelEnum.BAC1 else ledger.bac2_count
     shift_count = ledger.morning_count if shift == ShiftEnum.MORNING else ledger.afternoon_count
-    return (ledger.total_count, level_count, shift_count)
+
+    # If role_penalty is True, we are picking for MADAOUM or RESERVE.
+    # We want to prioritize those who have 0 madaoume/reserve count.
+    # We use (madaoume_count + reserve_count) as the primary sort key in that case.
+    benefit_count = ledger.madaoume_count + ledger.reserve_count
+
+    return (benefit_count if role_penalty else 0, ledger.total_count, level_count, shift_count, tie_breaker)
 
 
 # ── Duo helpers ────────────────────────────────────────────────────────────
@@ -220,7 +236,7 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                 cin   = ma_cin_map.get(ma.teacher_id)
                 shift = slot_shift_map.get(ma.exam_slot_id)
                 if cin and shift:
-                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level, role="MADAOUM")
 
         # ── Rollback reserve ledger ───────────────────────────────────────
         old_reserves = (
@@ -238,7 +254,7 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                 cin   = res_cin_map.get(ra.teacher_id)
                 shift = slot_shift_map.get(ra.exam_slot_id)
                 if cin and shift:
-                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level, role="RESERVE")
 
         # ── Rollback room supervisor ledger ──────────────────────────────
         old_rsa_ids = [
@@ -366,18 +382,23 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
     # In-memory duo history (fresh — cleared above)
     duo_history: dict[tuple, dict] = {}
 
-    # Track teacher occupation per (day, shift) to prevent double-booking
-    teacher_busy: dict[str, set] = {}  # {cin: {(day, shift)}}
+    # Track teacher occupation per concrete session to prevent double-booking.
+    # Workload still counts by shift, but availability is per S1/S2 session.
+    teacher_busy: dict[str, set[tuple[int, ShiftEnum, int]]] = {}
 
-    def is_busy(cin: str, day: int, shift: ShiftEnum) -> bool:
-        return (day, shift) in teacher_busy.get(cin, set())
+    def slot_busy_key(slot: sm.ExamSlot) -> tuple[int, ShiftEnum, int]:
+        return (slot.day, slot.shift, slot.slot_order)
 
-    def mark_busy(cin: str, day: int, shift: ShiftEnum):
-        teacher_busy.setdefault(cin, set()).add((day, shift))
+    def is_busy(cin: str, busy_key: tuple[int, ShiftEnum, int]) -> bool:
+        return busy_key in teacher_busy.get(cin, set())
+
+    def mark_busy(cin: str, busy_key: tuple[int, ShiftEnum, int]):
+        teacher_busy.setdefault(cin, set()).add(busy_key)
 
     for slot in slots:
         shift = slot.shift
         day   = slot.day
+        busy_key = slot_busy_key(slot)
 
         # Teachers of this subject are ineligible for supervision + reserve
         subject_teacher_ids: set[int] = {
@@ -391,7 +412,7 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                 if t.subject_id == slot.subject_id
                 and not _is_exempted(exemption_index, t.id, slot)
             ],
-            key=lambda t: _sort_key(_get_or_create_ledger(db, t.cin, year), shift, level),
+            key=lambda t: _sort_key(_get_or_create_ledger(db, t.cin, year), shift, level, role_penalty=True),
         )
         madaoum_id: int | None = None
         if not subject_teachers:
@@ -407,45 +428,17 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
             db.flush()
             result.madaoume.append(ma)
             ledger = _get_or_create_ledger(db, madaoum.cin, year)
-            _increment_ledger(ledger, shift, level)
+            _increment_ledger(ledger, shift, level, role="MADAOUM")
             madaoum_id = madaoum.id
-            mark_busy(madaoum.cin, day, shift)
+            mark_busy(madaoum.cin, busy_key)
 
-        # ── 2. Pick reserves ─────────────────────────────────────────────
-        reserve_count = slot.reserve_count if slot.reserve_count is not None else exam.max_reserves
+        # ── 2. Assign supervisors per room ───────────────────────────────
+        # Room supervision is the hard requirement. Reserves are assigned later
+        # from the remaining pool so they do not consume eligible supervisors.
         excluded: set[int] = subject_teacher_ids.copy()
         if madaoum_id:
             excluded.add(madaoum_id)
 
-        reserve_pool = sorted(
-            [
-                t for t in all_teachers
-                if t.id not in excluded
-                and not is_busy(t.cin, day, shift)
-                and not _is_exempted(exemption_index, t.id, slot)
-            ],
-            key=lambda t: _sort_key(_get_or_create_ledger(db, t.cin, year), shift, level),
-        )
-        actual_reserves = min(reserve_count, len(reserve_pool))
-        if actual_reserves < reserve_count:
-            result.warnings.append(Warning(
-                type="SOFT", code="INSUFFICIENT_RESERVES",
-                message=f"Requested {reserve_count} reserves, only {actual_reserves} available",
-                context={"exam_slot_id": slot.id},
-            ))
-
-        for i in range(actual_reserves):
-            t = reserve_pool[i]
-            ra = am.ReserveAssignment(exam_slot_id=slot.id, teacher_id=t.id, order=i)
-            db.add(ra)
-            db.flush()
-            result.reserves.append(ra)
-            ledger = _get_or_create_ledger(db, t.cin, year)
-            _increment_ledger(ledger, shift, level)
-            excluded.add(t.id)
-            mark_busy(t.cin, day, shift)
-
-        # ── 3. Assign supervisors per room ───────────────────────────────
         rsas = slot_to_rsas.get(slot.id, [])
 
         if not rsas:
@@ -460,7 +453,7 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
         eligible_count = len([
             t for t in all_teachers
             if t.id not in excluded
-            and not is_busy(t.cin, day, shift)
+            and not is_busy(t.cin, busy_key)
             and not _is_exempted(exemption_index, t.id, slot)
         ])
         if eligible_count < needed_total:
@@ -477,7 +470,7 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                 [
                     t for t in all_teachers
                     if t.id not in excluded
-                    and not is_busy(t.cin, day, shift)
+                    and not is_busy(t.cin, busy_key)
                     and not _is_exempted(exemption_index, t.id, slot)
                 ],
                 key=lambda t: _sort_key(_get_or_create_ledger(db, t.cin, year), shift, level),
@@ -507,7 +500,7 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
             for t in (t1, t2):
                 ledger = _get_or_create_ledger(db, t.cin, year)
                 _increment_ledger(ledger, shift, level)
-                mark_busy(t.cin, day, shift)
+                mark_busy(t.cin, busy_key)
                 excluded.add(t.id)
 
             _record_duo(duo_history, t1.id, t2.id, rsa.room_id)
@@ -519,7 +512,7 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                     [
                         t for t in all_teachers
                         if t.id not in excluded
-                        and not is_busy(t.cin, day, shift)
+                        and not is_busy(t.cin, busy_key)
                         and not _is_exempted(exemption_index, t.id, slot)
                     ],
                     key=lambda t: _sort_key(_get_or_create_ledger(db, t.cin, year), shift, level),
@@ -527,8 +520,39 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                 for t in extra_pool[:n_supervisors - 2]:
                     ledger = _get_or_create_ledger(db, t.cin, year)
                     _increment_ledger(ledger, shift, level)
-                    mark_busy(t.cin, day, shift)
+                    mark_busy(t.cin, busy_key)
                     excluded.add(t.id)
+
+        # ── 3. Pick reserves ─────────────────────────────────────────────
+        reserve_count = slot.reserve_count if slot.reserve_count is not None else exam.max_reserves
+
+        reserve_pool = sorted(
+            [
+                t for t in all_teachers
+                if t.id not in excluded
+                and not is_busy(t.cin, busy_key)
+                and not _is_exempted(exemption_index, t.id, slot)
+            ],
+            key=lambda t: _sort_key(_get_or_create_ledger(db, t.cin, year), shift, level, role_penalty=True),
+        )
+        actual_reserves = min(reserve_count, len(reserve_pool))
+        if actual_reserves < reserve_count:
+            result.warnings.append(Warning(
+                type="SOFT", code="INSUFFICIENT_RESERVES",
+                message=f"Requested {reserve_count} reserves, only {actual_reserves} available",
+                context={"exam_slot_id": slot.id},
+            ))
+
+        for i in range(actual_reserves):
+            t = reserve_pool[i]
+            ra = am.ReserveAssignment(exam_slot_id=slot.id, teacher_id=t.id, order=i)
+            db.add(ra)
+            db.flush()
+            result.reserves.append(ra)
+            ledger = _get_or_create_ledger(db, t.cin, year)
+            _increment_ledger(ledger, shift, level, role="RESERVE")
+            excluded.add(t.id)
+            mark_busy(t.cin, busy_key)
 
     db.commit()
     return result

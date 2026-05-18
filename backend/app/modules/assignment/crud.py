@@ -352,7 +352,7 @@ def reset_assignments(db: Session, exam: sm.Exam) -> None:
                 cin   = ma_cin_map.get(ma.teacher_id)
                 shift = slot_shift_map.get(ma.exam_slot_id)
                 if cin and shift:
-                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level, role="MADAOUM")
 
         # Rollback reserve ledger
         old_reserves = db.query(models.ReserveAssignment).filter(
@@ -368,7 +368,7 @@ def reset_assignments(db: Session, exam: sm.Exam) -> None:
                 cin   = res_cin_map.get(ra.teacher_id)
                 shift = slot_shift_map.get(ra.exam_slot_id)
                 if cin and shift:
-                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level)
+                    _decrement_ledger(_get_or_create_ledger(db, cin, year), shift, level, role="RESERVE")
 
         # Rollback room supervisor ledger
         old_rsa_ids = [

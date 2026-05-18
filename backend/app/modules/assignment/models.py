@@ -140,6 +140,8 @@ class WorkloadLedger(Base):
     bac2_count:      Mapped[int] = mapped_column(Integer, default=0)
     morning_count:   Mapped[int] = mapped_column(Integer, default=0)
     afternoon_count: Mapped[int] = mapped_column(Integer, default=0)
+    madaoume_count:  Mapped[int] = mapped_column(Integer, default=0)
+    reserve_count:   Mapped[int] = mapped_column(Integer, default=0)
 
 
 # ── DuoHistory ─────────────────────────────────────────────────────────────

@@ -154,6 +154,8 @@ class WorkloadLedgerOut(BaseModel):
     bac2_count:      int
     morning_count:   int
     afternoon_count: int
+    madaoume_count:  int
+    reserve_count:   int
     model_config = {"from_attributes": True}
 
 
