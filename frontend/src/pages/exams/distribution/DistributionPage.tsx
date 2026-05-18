@@ -379,6 +379,20 @@ export default function DistributionPage() {
     })
   }
 
+  const handleReset = () => {
+    resetAssignment.mutate(undefined, {
+      onSuccess: () => {
+        setLastResult(null)
+        setResetOpen(false)
+        toast.success('Répartition réinitialisée')
+      },
+      onError: () => {
+        setResetOpen(false)
+        toast.error('Erreur lors de la réinitialisation')
+      },
+    })
+  }
+
   return (
     <div className="p-8">
       <PageHeader title="Distribution" subtitle="Lancez l'algorithme d'affectation automatique" />
@@ -398,17 +412,30 @@ export default function DistributionPage() {
             </p>
           )}
         </div>
-        <Button
-          variant="secondary"
-          size="lg"
-          icon={runAssignment.isPending ? undefined : <Play size={16} />}
-          onClick={() => setConfirmOpen(true)}
-          loading={runAssignment.isPending}
-          disabled={!canRun}
-          className="shrink-0 bg-white text-indigo-600 hover:bg-indigo-50 border-0 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Lancer la distribution
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="secondary"
+            size="lg"
+            icon={runAssignment.isPending ? undefined : <Play size={16} />}
+            onClick={() => setConfirmOpen(true)}
+            loading={runAssignment.isPending}
+            disabled={!canRun}
+            className="bg-white text-indigo-600 hover:bg-indigo-50 border-0 shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Lancer la distribution
+          </Button>
+          <Button
+            variant="danger"
+            size="lg"
+            icon={<Trash2 size={16} />}
+            onClick={() => setResetOpen(true)}
+            loading={resetAssignment.isPending}
+            disabled={exam?.status === 'VALIDATED'}
+            className="bg-white/95 hover:bg-rose-50 shadow-lg"
+          >
+            Réinitialiser
+          </Button>
+        </div>
       </div>
 
       {/* Prerequisite gate banner */}
@@ -518,6 +545,16 @@ export default function DistributionPage() {
         description="Cette action remplacera toutes les affectations automatiques existantes. Continuer ?"
         confirmLabel="Lancer"
         variant="primary"
+      />
+
+      <ConfirmDialog
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        onConfirm={handleReset}
+        loading={resetAssignment.isPending}
+        title="Réinitialiser la répartition"
+        description="Cette action supprimera les affectations, les réservistes, les permanenciers et remettra l'examen en brouillon. Continuer ?"
+        confirmLabel="Réinitialiser"
       />
 
       <ConfirmDialog

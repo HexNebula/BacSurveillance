@@ -1,10 +1,10 @@
 """
 Greedy assignment algorithm.
 
-Per active ExamSlot (ordered by day ASC, shift ASC, slot_order ASC):
-  1. Pick المداوم from subject teachers (lowest workload)
-  2. For each RoomSlotAssignment: pick 2 supervisors respecting constraints
-  3. Pick reserves from the remaining pool
+Per concrete session (day ASC, shift ASC, slot_order ASC):
+  1. Pick المداوم per subject in the session from subject teachers
+  2. Pick supervisors for all RoomSlotAssignments respecting constraints
+  3. Pick session reserves from the remaining pool
   4. Update WorkloadLedger (keyed by CIN + academic year)
   5. Emit warnings on constraint violations
 
@@ -162,6 +162,7 @@ def _is_exempted(exemption_index: dict, teacher_id: int, slot: sm.ExamSlot) -> b
 
 PAIR_BRANCH_LIMIT = 120
 PAIR_FALLBACK_BRANCH_LIMIT = 600
+PAIR_SEARCH_NODE_LIMIT = 25_000
 
 
 def _pair_score(
@@ -172,8 +173,10 @@ def _pair_score(
     ledger_by_cin: dict[str, am.WorkloadLedger],
     shift: ShiftEnum,
     level: LevelEnum,
+    allow_hard_repeat: bool = False,
 ) -> tuple | None:
-    if _hard_duo(history, t1.id, t2.id, room_id):
+    hard_repeated = _hard_duo(history, t1.id, t2.id, room_id)
+    if hard_repeated and not allow_hard_repeat:
         return None
 
     l1 = ledger_by_cin[t1.cin]
@@ -185,6 +188,7 @@ def _pair_score(
     soft_repeated = _soft_duo(history, t1.id, t2.id)
 
     return (
+        100_000 if hard_repeated else 0,
         10_000 if soft_repeated else 0,
         l1.total_count + l2.total_count,
         l1_level + l2_level,
@@ -207,14 +211,25 @@ def _room_pair_candidates(
     shift: ShiftEnum,
     level: LevelEnum,
     branch_limit: int,
-) -> list[tuple[tuple, am.Teacher, am.Teacher, bool]]:
-    pairs: list[tuple[tuple, am.Teacher, am.Teacher, bool]] = []
+    allow_hard_repeat: bool = False,
+) -> list[tuple[tuple, am.Teacher, am.Teacher, bool, bool]]:
+    pairs: list[tuple[tuple, am.Teacher, am.Teacher, bool, bool]] = []
     for i, t1 in enumerate(candidates):
         for t2 in candidates[i + 1:]:
-            score = _pair_score(t1, t2, history, rsa.room_id, ledger_by_cin, shift, level)
+            hard_repeated = _hard_duo(history, t1.id, t2.id, rsa.room_id)
+            score = _pair_score(
+                t1,
+                t2,
+                history,
+                rsa.room_id,
+                ledger_by_cin,
+                shift,
+                level,
+                allow_hard_repeat=allow_hard_repeat,
+            )
             if score is None:
                 continue
-            pairs.append((score, t1, t2, _soft_duo(history, t1.id, t2.id)))
+            pairs.append((score, t1, t2, _soft_duo(history, t1.id, t2.id), hard_repeated))
     return sorted(pairs, key=lambda item: item[0])[:branch_limit]
 
 
@@ -226,7 +241,8 @@ def _pick_room_pairs(
     shift: ShiftEnum,
     level: LevelEnum,
     branch_limit: int = PAIR_BRANCH_LIMIT,
-) -> list[tuple[sm.ExamSlot, sm.RoomSlotAssignment, am.Teacher, am.Teacher, bool]] | None:
+    allow_hard_repeat: bool = False,
+) -> list[tuple[sm.ExamSlot, sm.RoomSlotAssignment, am.Teacher, am.Teacher, bool, bool]] | None:
     if not tasks:
         return []
 
@@ -239,6 +255,7 @@ def _pick_room_pairs(
             shift,
             level,
             branch_limit,
+            allow_hard_repeat=allow_hard_repeat,
         )
         for _, rsa in tasks
     }
@@ -246,17 +263,26 @@ def _pick_room_pairs(
         return None
 
     ordered_tasks = sorted(tasks, key=lambda task: (len(pairs_by_rsa[task[1].id]), task[1].room_id))
-    zero_score = (0, 0, 0, 0, 0, 0, 0)
+    zero_score = (0, 0, 0, 0, 0, 0, 0, 0)
     best_score: tuple | None = None
-    best_choices: list[tuple[sm.ExamSlot, sm.RoomSlotAssignment, am.Teacher, am.Teacher, bool]] | None = None
+    best_choices: list[tuple[sm.ExamSlot, sm.RoomSlotAssignment, am.Teacher, am.Teacher, bool, bool]] | None = None
+    visited_nodes = 0
+    search_limited = False
 
     def backtrack(
         index: int,
         used_teacher_ids: set[int],
         current_score: tuple,
-        choices: list[tuple[sm.ExamSlot, sm.RoomSlotAssignment, am.Teacher, am.Teacher, bool]],
+        choices: list[tuple[sm.ExamSlot, sm.RoomSlotAssignment, am.Teacher, am.Teacher, bool, bool]],
     ) -> None:
-        nonlocal best_score, best_choices
+        nonlocal best_score, best_choices, visited_nodes, search_limited
+
+        if search_limited:
+            return
+        visited_nodes += 1
+        if visited_nodes > PAIR_SEARCH_NODE_LIMIT:
+            search_limited = True
+            return
 
         if best_score is not None and current_score >= best_score:
             return
@@ -266,10 +292,10 @@ def _pick_room_pairs(
             return
 
         slot, rsa = ordered_tasks[index]
-        for score, t1, t2, soft_repeated in pairs_by_rsa[rsa.id]:
+        for score, t1, t2, soft_repeated, hard_repeated in pairs_by_rsa[rsa.id]:
             if t1.id in used_teacher_ids or t2.id in used_teacher_ids:
                 continue
-            choices.append((slot, rsa, t1, t2, soft_repeated))
+            choices.append((slot, rsa, t1, t2, soft_repeated, hard_repeated))
             backtrack(
                 index + 1,
                 used_teacher_ids | {t1.id, t2.id},
@@ -279,8 +305,8 @@ def _pick_room_pairs(
             choices.pop()
 
     backtrack(0, set(), zero_score, [])
-    if best_choices is None and branch_limit < PAIR_FALLBACK_BRANCH_LIMIT:
-        return _pick_room_pairs(
+    if best_choices is None and (search_limited or branch_limit < PAIR_FALLBACK_BRANCH_LIMIT):
+        return _pick_room_pairs_greedy(
             tasks,
             candidates_by_rsa,
             history,
@@ -288,8 +314,54 @@ def _pick_room_pairs(
             shift,
             level,
             branch_limit=PAIR_FALLBACK_BRANCH_LIMIT,
+            allow_hard_repeat=allow_hard_repeat,
         )
     return best_choices
+
+
+def _pick_room_pairs_greedy(
+    tasks: list[tuple[sm.ExamSlot, sm.RoomSlotAssignment]],
+    candidates_by_rsa: dict[int, list[am.Teacher]],
+    history: dict,
+    ledger_by_cin: dict[str, am.WorkloadLedger],
+    shift: ShiftEnum,
+    level: LevelEnum,
+    branch_limit: int,
+    allow_hard_repeat: bool = False,
+) -> list[tuple[sm.ExamSlot, sm.RoomSlotAssignment, am.Teacher, am.Teacher, bool, bool]] | None:
+    pairs_by_rsa = {
+        rsa.id: _room_pair_candidates(
+            rsa,
+            candidates_by_rsa.get(rsa.id, []),
+            history,
+            ledger_by_cin,
+            shift,
+            level,
+            branch_limit,
+            allow_hard_repeat=allow_hard_repeat,
+        )
+        for _, rsa in tasks
+    }
+    if any(not pairs_by_rsa[rsa.id] for _, rsa in tasks):
+        return None
+
+    ordered_tasks = sorted(tasks, key=lambda task: (len(pairs_by_rsa[task[1].id]), task[1].room_id))
+    used_teacher_ids: set[int] = set()
+    choices: list[tuple[sm.ExamSlot, sm.RoomSlotAssignment, am.Teacher, am.Teacher, bool, bool]] = []
+
+    for slot, rsa in ordered_tasks:
+        selected = None
+        for _, t1, t2, soft_repeated, hard_repeated in pairs_by_rsa[rsa.id]:
+            if t1.id in used_teacher_ids or t2.id in used_teacher_ids:
+                continue
+            selected = (slot, rsa, t1, t2, soft_repeated, hard_repeated)
+            break
+        if selected is None:
+            return None
+        choices.append(selected)
+        used_teacher_ids.update({selected[2].id, selected[3].id})
+
+    return choices
 
 
 # ── Fair target computation ────────────────────────────────────────────────
@@ -600,6 +672,158 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
     def mark_busy(cin: str, busy_key: tuple[int, ShiftEnum, int]):
         teacher_busy.setdefault(cin, set()).add(busy_key)
 
+    def pick_session_reserves(
+        session_slots: list[sm.ExamSlot],
+        busy_key: tuple[int, ShiftEnum, int],
+        shift: ShiftEnum,
+    ) -> None:
+        requested_by_slot = {
+            slot.id: slot.reserve_count if slot.reserve_count is not None else exam.max_reserves
+            for slot in session_slots
+        }
+        requested = max(requested_by_slot.values(), default=0)
+        if requested <= 0:
+            return
+
+        session_subject_ids = {slot.subject_id for slot in session_slots}
+        record_slots = [
+            slot for slot in session_slots
+            if requested_by_slot[slot.id] > 0
+        ] or session_slots
+        reserve_order = {slot.id: 0 for slot in record_slots}
+
+        subject_blocked = [
+            teacher for teacher in all_teachers
+            if teacher.subject_id in session_subject_ids
+        ]
+        busy_blocked = [
+            teacher for teacher in all_teachers
+            if teacher.subject_id not in session_subject_ids
+            and is_busy(teacher.cin, busy_key)
+        ]
+        exempted_blocked = [
+            teacher for teacher in all_teachers
+            if teacher.subject_id not in session_subject_ids
+            and not is_busy(teacher.cin, busy_key)
+            and any(
+                _is_exempted(exemption_index, teacher.id, slot)
+                for slot in session_slots
+            )
+        ]
+        exempted_blocked_ids = {teacher.id for teacher in exempted_blocked}
+        reserve_pool = sorted(
+            [
+                teacher for teacher in all_teachers
+                if teacher.subject_id not in session_subject_ids
+                and not is_busy(teacher.cin, busy_key)
+                and teacher.id not in exempted_blocked_ids
+            ],
+            key=lambda teacher: _sort_key(
+                ledger_by_cin[teacher.cin],
+                shift,
+                level,
+                tie_breaker=teacher.ordinal or teacher.id,
+                role_penalty=True,
+            ),
+        )
+
+        actual = min(requested, len(reserve_pool))
+        if actual < requested:
+            result.warnings.append(Warning(
+                type="SOFT",
+                code="INSUFFICIENT_SESSION_RESERVES",
+                message=(
+                    f"Session day {busy_key[0]} {busy_key[1].value} S{busy_key[2]} "
+                    f"requested {requested} reserves, only {actual} available after "
+                    "excluding session subject teachers, already assigned teachers, and exemptions"
+                ),
+                context={
+                    "day": busy_key[0],
+                    "shift": busy_key[1].value,
+                    "slot_order": busy_key[2],
+                    "exam_slot_ids": [slot.id for slot in session_slots],
+                    "requested": requested,
+                    "available": len(reserve_pool),
+                    "enrolled_teachers": len(all_teachers),
+                    "excluded_subject_teachers": len(subject_blocked),
+                    "excluded_busy_teachers": len(busy_blocked),
+                    "excluded_exempted_teachers": len(exempted_blocked),
+                    "requested_by_slot": requested_by_slot,
+                },
+            ))
+
+        for i, teacher in enumerate(reserve_pool[:actual]):
+            # Reserves are session-level, but the current schema stores a slot id.
+            slot = record_slots[i % len(record_slots)]
+            ra = am.ReserveAssignment(
+                exam_slot_id=slot.id,
+                teacher_id=teacher.id,
+                order=reserve_order[slot.id],
+            )
+            db.add(ra)
+            db.flush()
+            result.reserves.append(ra)
+            ledger = ledger_by_cin[teacher.cin]
+            _increment_ledger(ledger, shift, level, role="RESERVE")
+            mark_busy(teacher.cin, busy_key)
+            reserve_order[slot.id] += 1
+
+    def pick_session_madaoums(
+        session_slots: list[sm.ExamSlot],
+        busy_key: tuple[int, ShiftEnum, int],
+        shift: ShiftEnum,
+    ) -> None:
+        slots_by_subject: dict[int, list[sm.ExamSlot]] = {}
+        for slot in session_slots:
+            slots_by_subject.setdefault(slot.subject_id, []).append(slot)
+
+        for subject_id, subject_slots in slots_by_subject.items():
+            subject_teachers = sorted(
+                [
+                    teacher for teacher in all_teachers
+                    if teacher.subject_id == subject_id
+                    and not is_busy(teacher.cin, busy_key)
+                    and not any(
+                        _is_exempted(exemption_index, teacher.id, slot)
+                        for slot in subject_slots
+                    )
+                ],
+                key=lambda teacher: _sort_key(
+                    ledger_by_cin[teacher.cin],
+                    shift,
+                    level,
+                    tie_breaker=teacher.ordinal or teacher.id,
+                    role_penalty=True,
+                ),
+            )
+            if not subject_teachers:
+                result.warnings.append(Warning(
+                    type="SOFT",
+                    code="NO_SESSION_MADAOUM_AVAILABLE",
+                    message=(
+                        f"No madaoum candidate found for subject {subject_id} "
+                        f"in day {busy_key[0]} {busy_key[1].value} S{busy_key[2]}"
+                    ),
+                    context={
+                        "day": busy_key[0],
+                        "shift": busy_key[1].value,
+                        "slot_order": busy_key[2],
+                        "subject_id": subject_id,
+                        "exam_slot_ids": [slot.id for slot in subject_slots],
+                    },
+                ))
+                continue
+
+            madaoum = subject_teachers[0]
+            # Madaoum is session-subject-level, but the current schema stores a slot id.
+            ma = am.MadaoumeAssignment(exam_slot_id=subject_slots[0].id, teacher_id=madaoum.id)
+            db.add(ma)
+            db.flush()
+            result.madaoume.append(ma)
+            ledger = ledger_by_cin[madaoum.cin]
+            _increment_ledger(ledger, shift, level, role="MADAOUM")
+            mark_busy(madaoum.cin, busy_key)
+
     sessions: dict[tuple[int, ShiftEnum, int], list[sm.ExamSlot]] = {}
     for slot in slots:
         sessions.setdefault(slot_busy_key(slot), []).append(slot)
@@ -607,33 +831,8 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
     for busy_key, session_slots in sessions.items():
         day, shift, slot_order = busy_key
 
-        # ── 1. Pick المداوم per slot ─────────────────────────────────────
-        for slot in session_slots:
-            subject_teachers = sorted(
-                [
-                    t for t in all_teachers
-                    if t.subject_id == slot.subject_id
-                    and not is_busy(t.cin, busy_key)
-                    and not _is_exempted(exemption_index, t.id, slot)
-                ],
-                key=lambda t: _sort_key(ledger_by_cin[t.cin], shift, level, role_penalty=True),
-            )
-            if not subject_teachers:
-                result.warnings.append(Warning(
-                    type="SOFT", code="NO_MADAOUM_AVAILABLE",
-                    message=f"No teacher found for subject {slot.subject_id}",
-                    context={"exam_slot_id": slot.id, "subject_id": slot.subject_id},
-                ))
-                continue
-
-            madaoum = subject_teachers[0]
-            ma = am.MadaoumeAssignment(exam_slot_id=slot.id, teacher_id=madaoum.id)
-            db.add(ma)
-            db.flush()
-            result.madaoume.append(ma)
-            ledger = ledger_by_cin[madaoum.cin]
-            _increment_ledger(ledger, shift, level, role="MADAOUM")
-            mark_busy(madaoum.cin, busy_key)
+        # ── 1. Pick المداوم per subject for the whole session ─────────────
+        pick_session_madaoums(session_slots, busy_key, shift)
 
         # ── 2. Assign all room supervisors for the whole session ──────────
         room_tasks: list[tuple[sm.ExamSlot, sm.RoomSlotAssignment]] = []
@@ -679,8 +878,41 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                 )
                 room_tasks.append((slot, rsa))
 
+        used_hard_repeat_fallback = False
         room_pairs = _pick_room_pairs(room_tasks, candidates_by_rsa, duo_history, ledger_by_cin, shift, level)
         if room_pairs is None:
+            room_pairs = _pick_room_pairs(
+                room_tasks,
+                candidates_by_rsa,
+                duo_history,
+                ledger_by_cin,
+                shift,
+                level,
+                branch_limit=PAIR_FALLBACK_BRANCH_LIMIT,
+                allow_hard_repeat=True,
+            )
+            used_hard_repeat_fallback = room_pairs is not None
+
+        if room_pairs is None:
+            total_supervisors_needed = sum(
+                rsa.supervisors_override or exam.supervisors_per_room
+                for _, rsa in room_tasks
+            )
+            available_teacher_ids = {
+                teacher.id
+                for teachers in candidates_by_rsa.values()
+                for teacher in teachers
+            }
+            room_candidate_counts = [
+                {
+                    "exam_slot_id": slot.id,
+                    "room_slot_assignment_id": rsa.id,
+                    "room_id": rsa.room_id,
+                    "needed": rsa.supervisors_override or exam.supervisors_per_room,
+                    "candidate_count": len(candidates_by_rsa.get(rsa.id, [])),
+                }
+                for slot, rsa in room_tasks
+            ]
             result.warnings.append(Warning(
                 type="HARD", code="CANNOT_FILL_SESSION_ROOMS",
                 message=f"Cannot fill all rooms for day {day} {shift.value} S{slot_order}",
@@ -690,17 +922,58 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                     "slot_order": slot_order,
                     "exam_slot_ids": [slot.id for slot in session_slots],
                     "room_ids": [rsa.room_id for _, rsa in room_tasks],
+                    "room_count": len(room_tasks),
+                    "needed_supervisors": total_supervisors_needed,
+                    "available_distinct_candidates": len(available_teacher_ids),
+                    "room_candidate_counts": room_candidate_counts,
                 },
             ))
             room_pairs = []
+        elif used_hard_repeat_fallback:
+            hard_repeated_pairs = [
+                {
+                    "exam_slot_id": slot.id,
+                    "room_slot_assignment_id": rsa.id,
+                    "room_id": rsa.room_id,
+                    "teacher_1_id": t1.id,
+                    "teacher_1_name": t1.name_fr,
+                    "teacher_2_id": t2.id,
+                    "teacher_2_name": t2.name_fr,
+                }
+                for slot, rsa, t1, t2, _, hard_repeated in room_pairs
+                if hard_repeated
+            ]
+            result.warnings.append(Warning(
+                type="SOFT",
+                code="ROOM_DUO_HARD_REPEAT_USED",
+                message=(
+                    f"Session day {day} {shift.value} S{slot_order} required repeating "
+                    f"{len(hard_repeated_pairs)} duo(s) in the same room to fill all rooms"
+                ),
+                context={
+                    "day": day,
+                    "shift": shift.value,
+                    "slot_order": slot_order,
+                    "exam_slot_ids": [slot.id for slot in session_slots],
+                    "room_ids": [rsa.room_id for _, rsa in room_tasks],
+                    "repeated_pairs": hard_repeated_pairs,
+                },
+            ))
 
-        for slot, rsa, t1, t2, soft_repeated in room_pairs:
+        for slot, rsa, t1, t2, soft_repeated, hard_repeated in room_pairs:
             n_supervisors = rsa.supervisors_override or exam.supervisors_per_room
             if soft_repeated:
                 result.warnings.append(Warning(
                     type="SOFT", code="DUO_REPEATED",
                     message=f"Teachers {t1.id} and {t2.id} have been paired before",
-                    context={"teacher_1_id": t1.id, "teacher_2_id": t2.id, "room_id": rsa.room_id},
+                    context={
+                        "teacher_1_id": t1.id,
+                        "teacher_1_name": t1.name_fr,
+                        "teacher_2_id": t2.id,
+                        "teacher_2_name": t2.name_fr,
+                        "room_id": rsa.room_id,
+                        "same_room_repeat": hard_repeated,
+                    },
                 ))
 
             assignment = am.RoomAssignment(
@@ -740,39 +1013,8 @@ def run_assignment(db: Session, exam: sm.Exam) -> AssignmentResult:
                     _increment_ledger(ledger, shift, level)
                     mark_busy(t.cin, busy_key)
 
-        # ── 3. Pick reserves per slot after all session rooms ─────────────
-        for slot in session_slots:
-            subject_teacher_ids = {
-                t.id for t in all_teachers if t.subject_id == slot.subject_id
-            }
-            reserve_count = slot.reserve_count if slot.reserve_count is not None else exam.max_reserves
-
-            reserve_pool = sorted(
-                [
-                    t for t in all_teachers
-                    if t.id not in subject_teacher_ids
-                    and not is_busy(t.cin, busy_key)
-                    and not _is_exempted(exemption_index, t.id, slot)
-                ],
-                key=lambda t: _sort_key(ledger_by_cin[t.cin], shift, level, role_penalty=True),
-            )
-            actual_reserves = min(reserve_count, len(reserve_pool))
-            if actual_reserves < reserve_count:
-                result.warnings.append(Warning(
-                    type="SOFT", code="INSUFFICIENT_RESERVES",
-                    message=f"Requested {reserve_count} reserves, only {actual_reserves} available",
-                    context={"exam_slot_id": slot.id},
-                ))
-
-            for i in range(actual_reserves):
-                t = reserve_pool[i]
-                ra = am.ReserveAssignment(exam_slot_id=slot.id, teacher_id=t.id, order=i)
-                db.add(ra)
-                db.flush()
-                result.reserves.append(ra)
-                ledger = ledger_by_cin[t.cin]
-                _increment_ledger(ledger, shift, level, role="RESERVE")
-                mark_busy(t.cin, busy_key)
+        # ── 3. Pick reserves globally after all session rooms ─────────────
+        pick_session_reserves(session_slots, busy_key, shift)
 
     db.commit()
     return result

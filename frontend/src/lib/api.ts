@@ -5,7 +5,7 @@ import type {
   Teacher, ExamTeacher, TeacherExemption, RoomAssignment, WorkloadLedger, TeacherSchedule,
 } from '../types'
 
-const http = axios.create({ baseURL: '/api/v1' })
+const http = axios.create({ baseURL: '/api/v1', timeout: 60_000 })
 
 // ── Center ────────────────────────────────────────────────────────────────────
 
