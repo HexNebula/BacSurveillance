@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
 import type { ExamFiliere, Filiere } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
@@ -14,6 +14,12 @@ import { ConfirmDialog } from '../../../components/ui/ConfirmDialog'
 import { Badge } from '../../../components/ui/Badge'
 import { EmptyState } from '../../../components/ui/EmptyState'
 import { Spinner } from '../../../components/ui/Spinner'
+
+function filiereLevelForExam(level: string | undefined) {
+  if (!level) return undefined
+  if (level.startsWith('BAC2')) return 'BAC2'
+  return level
+}
 
 function EnrollModal({ open, onClose, examId, filieres, enrolled }: {
   open: boolean
@@ -104,10 +110,6 @@ function EditRoomModal({ open, onClose, examFiliere, filiereMap }: {
   const toast = useToast()
   const [roomCount, setRoomCount] = useState(examFiliere.room_count.toString())
 
-  useEffect(() => {
-    setRoomCount(examFiliere.room_count.toString())
-  }, [examFiliere.room_count])
-
   const filiere = filiereMap[examFiliere.filiere_id]
 
   const handleSave = () => {
@@ -145,7 +147,7 @@ export default function BranchesPage() {
   const { examId } = useActiveExam()
   const { data: exam } = useExam(examId)
   const { data: examFilieres = [], isLoading: efLoading } = useExamFilieres(examId)
-  const { data: filieres = [], isLoading: fLoading } = useFilieres(exam?.level ?? undefined)
+  const { data: filieres = [], isLoading: fLoading } = useFilieres(filiereLevelForExam(exam?.level))
   const removeEF = useRemoveExamFiliere()
   const toast = useToast()
 

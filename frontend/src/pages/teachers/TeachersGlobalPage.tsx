@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Pencil, Trash2, Upload, Download } from 'lucide-react'
+import { Download, Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import type { Teacher, GenderEnum } from '../../types'
 import {
   useAllTeachers,
@@ -17,25 +17,11 @@ import { Select } from '../../components/ui/Select'
 import { Modal } from '../../components/ui/Modal'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { Badge } from '../../components/ui/Badge'
-import { Table } from '../../components/ui/Table'
-import type { Column } from '../../components/ui/Table'
-import { cn } from '../../lib/utils'
+import { TeacherAvatar } from '../../components/ui/TeacherAvatar'
 
 const INITIAL_FORM = {
   name_fr: '', gender: 'M' as GenderEnum,
   cin: '', som: '', school: '', subject_id: '',
-}
-
-function TeacherAvatar({ name, gender }: { name: string; gender: string }) {
-  const initials = name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
-  return (
-    <div className={cn(
-      'w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0',
-      gender === 'F' ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-700',
-    )}>
-      {initials}
-    </div>
-  )
 }
 
 function TeacherFormModal({ open, onClose, editing }: {
@@ -179,13 +165,16 @@ function ExcelImportPanel() {
   }
 
   return (
-    <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center bg-white mb-6">
-      <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center mx-auto mb-3 text-slate-400">
+    <div className="mb-5 flex flex-wrap items-center gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-400">
         <Upload size={20} />
       </div>
-      <h3 className="font-semibold text-slate-700 text-sm mb-1">Importer via Excel</h3>
-      <p className="text-xs text-slate-400 mb-4">Format CSV — colonnes : nom_fr, genre (M/F), cin, som, etablissement, ordinal</p>
-      <div className="flex items-center justify-center gap-3 flex-wrap">
+      <div className="min-w-0 flex-1">
+        <h3 className="text-sm font-semibold text-slate-800">Importer via Excel</h3>
+        <p className="text-xs text-slate-400">CSV : nom_fr, genre, cin, som, etablissement, ordinal</p>
+        {file && <p className="mt-1 text-xs text-slate-500">Fichier : <strong>{file.name}</strong></p>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
         <a
           href="/teacher-template.xlsx"
           download
@@ -203,7 +192,49 @@ function ExcelImportPanel() {
           </Button>
         )}
       </div>
-      {file && <p className="text-xs text-slate-500 mt-3">Fichier : <strong>{file.name}</strong></p>}
+    </div>
+  )
+}
+
+function TeacherListItem({
+  teacher,
+  subjectName,
+  onEdit,
+  onDelete,
+}: {
+  teacher: Teacher
+  subjectName: string
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(240px,1.5fr)_minmax(160px,1fr)_minmax(180px,1fr)_96px_72px] items-center gap-4 border-b border-slate-100 px-4 py-3 last:border-b-0 hover:bg-slate-50/70">
+      <div className="flex min-w-0 items-center gap-3">
+        <TeacherAvatar gender={teacher.gender} size="sm" />
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-slate-900">{teacher.name_fr}</div>
+          <div className="font-mono text-xs text-slate-400">{teacher.cin}</div>
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        <div className="truncate text-sm text-slate-700">{subjectName}</div>
+        <div className="text-xs text-slate-400">Matière</div>
+      </div>
+
+      <div className="min-w-0">
+        <div className="truncate text-sm text-slate-700">{teacher.school ?? '—'}</div>
+        <div className="text-xs text-slate-400">Établissement</div>
+      </div>
+
+      <Badge variant={teacher.gender === 'F' ? 'danger' : 'primary'}>
+        {teacher.gender === 'M' ? 'Homme' : 'Femme'}
+      </Badge>
+
+      <div className="flex justify-end gap-1">
+        <Button variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={onEdit} />
+        <Button variant="ghost" size="sm" icon={<Trash2 size={13} />} className="text-rose-500" onClick={onDelete} />
+      </div>
     </div>
   )
 }
@@ -245,47 +276,6 @@ export default function TeachersGlobalPage() {
       },
     })
   }
-
-  const columns: Column<Teacher>[] = [
-    {
-      key: 'ordinal', label: '#', width: '48px',
-      render: (_t, i) => (
-        <span className="font-mono text-xs font-semibold text-slate-400">{i + 1}</span>
-      ),
-    },
-    {
-      key: 'name_fr', label: 'Surveillant',
-      render: t => (
-        <div className="flex items-center gap-3">
-          <TeacherAvatar name={t.name_fr} gender={t.gender} />
-          <div className="font-medium text-slate-800 text-sm">{t.name_fr}</div>
-        </div>
-      ),
-    },
-    {
-      key: 'gender', label: 'Genre', width: '90px',
-      render: t => (
-        <Badge variant={t.gender === 'F' ? 'danger' : 'primary'}>
-          {t.gender === 'M' ? 'Homme' : 'Femme'}
-        </Badge>
-      ),
-    },
-    { key: 'cin', label: 'CIN', render: t => <span className="font-mono text-xs text-slate-600">{t.cin}</span> },
-    { key: 'school', label: 'Établissement', render: t => t.school ?? '—' },
-    {
-      key: 'subject', label: 'Matière',
-      render: t => t.subject_id ? (subjectMap[t.subject_id] ?? `#${t.subject_id}`) : '—',
-    },
-    {
-      key: 'actions', label: '', width: '80px',
-      render: t => (
-        <div className="flex gap-1 justify-end">
-          <Button variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={() => { setEditing(t); setModalOpen(true) }} />
-          <Button variant="ghost" size="sm" icon={<Trash2 size={13} />} className="text-rose-500" onClick={() => setDeleting(t)} />
-        </div>
-      ),
-    },
-  ]
 
   return (
     <div className="p-8">
@@ -338,13 +328,49 @@ export default function TeachersGlobalPage() {
         )}
       </div>
 
-      <Table
-        columns={columns}
-        data={filtered}
-        loading={isLoading}
-        rowKey={t => t.id}
-        emptyMessage="Aucun résultat pour ces filtres."
-      />
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="grid grid-cols-[minmax(240px,1.5fr)_minmax(160px,1fr)_minmax(180px,1fr)_96px_72px] gap-4 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <div>Surveillant</div>
+          <div>Matière</div>
+          <div>Établissement</div>
+          <div>Genre</div>
+          <div />
+        </div>
+
+        {isLoading ? (
+          <div className="divide-y divide-slate-100">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={index} className="grid grid-cols-[minmax(240px,1.5fr)_minmax(160px,1fr)_minmax(180px,1fr)_96px_72px] items-center gap-4 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-9 w-9 animate-pulse rounded-lg bg-slate-100" />
+                  <div className="space-y-2">
+                    <div className="h-3 w-32 animate-pulse rounded bg-slate-100" />
+                    <div className="h-2.5 w-20 animate-pulse rounded bg-slate-100" />
+                  </div>
+                </div>
+                <div className="h-3 w-28 animate-pulse rounded bg-slate-100" />
+                <div className="h-3 w-32 animate-pulse rounded bg-slate-100" />
+                <div className="h-5 w-16 animate-pulse rounded-full bg-slate-100" />
+                <div className="h-7 w-14 animate-pulse rounded bg-slate-100" />
+              </div>
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="px-4 py-12 text-center text-sm text-slate-400">
+            Aucun résultat pour ces filtres.
+          </div>
+        ) : (
+          filtered.map(t => (
+            <TeacherListItem
+              key={t.id}
+              teacher={t}
+              subjectName={t.subject_id ? (subjectMap[t.subject_id] ?? `#${t.subject_id}`) : '—'}
+              onEdit={() => { setEditing(t); setModalOpen(true) }}
+              onDelete={() => setDeleting(t)}
+            />
+          ))
+        )}
+      </div>
 
       <TeacherFormModal
         open={modalOpen}

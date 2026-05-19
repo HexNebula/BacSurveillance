@@ -2,6 +2,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.modules.assignment import models, schemas
+from app.modules.center import models as center_models
 from app.modules.scheduling import models as sm
 
 
@@ -11,6 +12,16 @@ def _next_ordinal(db: Session) -> int:
     """Return max(ordinal) + 1, or 1 if the table is empty."""
     max_ord = db.query(func.max(models.Teacher.ordinal)).scalar()
     return (max_ord or 0) + 1
+
+
+def teacher_out(db: Session, teacher: models.Teacher) -> schemas.TeacherOut:
+    subject_name = None
+    if teacher.subject_id:
+        subject_name = db.query(center_models.Subject.name_fr).filter_by(id=teacher.subject_id).scalar()
+
+    return schemas.TeacherOut.model_validate(teacher).model_copy(
+        update={"subject_name": subject_name}
+    )
 
 
 def create_teacher(db: Session, data: schemas.TeacherCreate) -> models.Teacher:
@@ -254,38 +265,56 @@ def get_teacher_schedule(db: Session, exam_id: int) -> schemas.TeacherScheduleOu
         if ra.supervisor_2_id:
             supervisor_map[slot_id][ra.supervisor_2_id] = room.name
 
-    # reserves: slot_id → set of teacher_ids
-    reserve_map: dict[int, set[int]] = {}
+    slot_by_id = {s.id: s for s in slots}
+
+    # reserves: teacher_id → concrete session keys
+    reserve_session_map: dict[int, set[tuple[int, str, int]]] = {}
     for res in db.query(models.ReserveAssignment).filter(
         models.ReserveAssignment.exam_slot_id.in_([s.id for s in slots])
     ).all():
-        reserve_map.setdefault(res.exam_slot_id, set()).add(res.teacher_id)
+        slot = slot_by_id.get(res.exam_slot_id)
+        if slot:
+            reserve_session_map.setdefault(res.teacher_id, set()).add(
+                (slot.day, slot.shift.value, slot.slot_order)
+            )
 
-    # madaoum: slot_id → set of teacher_ids
-    madaoum_map: dict[int, set[int]] = {}
+    # madaoum: teacher_id → session-subject keys
+    madaoum_session_subject_map: dict[int, set[tuple[int, str, int, int]]] = {}
     for mad in db.query(models.MadaoumeAssignment).filter(
         models.MadaoumeAssignment.exam_slot_id.in_([s.id for s in slots])
     ).all():
-        madaoum_map.setdefault(mad.exam_slot_id, set()).add(mad.teacher_id)
+        slot = slot_by_id.get(mad.exam_slot_id)
+        if slot:
+            madaoum_session_subject_map.setdefault(mad.teacher_id, set()).add(
+                (slot.day, slot.shift.value, slot.slot_order, slot.subject_id)
+            )
 
     rows: list[schemas.TeacherScheduleRow] = []
     for t in teachers:
         cells: list[schemas.TeacherSlotCell] = []
         total_sup = total_res = total_mad = 0
+        counted_reserve_sessions: set[tuple[int, str, int]] = set()
+        counted_madaoum_subjects: set[tuple[int, str, int, int]] = set()
         for slot in slots:
             sid = slot.id
+            session_key = (slot.day, slot.shift.value, slot.slot_order)
+            session_subject_key = (*session_key, slot.subject_id)
             if t.id in supervisor_map.get(sid, {}):
                 role = "SUPERVISOR"
                 room_name = supervisor_map[sid][t.id]
                 total_sup += 1
-            elif t.id in reserve_map.get(sid, set()):
+            elif session_key in reserve_session_map.get(t.id, set()):
                 role = "RESERVE"
                 room_name = None
-                total_res += 1
-            elif t.id in madaoum_map.get(sid, set()):
+                if session_key not in counted_reserve_sessions:
+                    total_res += 1
+                    counted_reserve_sessions.add(session_key)
+            elif session_subject_key in madaoum_session_subject_map.get(t.id, set()):
                 role = "MADAOUM"
                 room_name = None
-                total_mad += 1
+                if session_subject_key not in counted_madaoum_subjects:
+                    total_mad += 1
+                    counted_madaoum_subjects.add(session_subject_key)
             else:
                 role = None
                 room_name = None
@@ -301,6 +330,8 @@ def get_teacher_schedule(db: Session, exam_id: int) -> schemas.TeacherScheduleOu
         rows.append(schemas.TeacherScheduleRow(
             teacher_id=t.id,
             name_fr=t.name_fr,
+            gender=t.gender,
+            school=t.school,
             ordinal=t.ordinal,
             cin=t.cin,
             cells=cells,
@@ -315,7 +346,60 @@ def get_teacher_schedule(db: Session, exam_id: int) -> schemas.TeacherScheduleOu
 # ── WorkloadLedger ─────────────────────────────────────────────────────────
 
 def get_workload_ledger(db: Session, year: str) -> list[models.WorkloadLedger]:
+    rebuild_workload_ledger(db, year)
     return db.query(models.WorkloadLedger).filter_by(year=year).order_by(models.WorkloadLedger.total_count.desc()).all()
+
+
+def rebuild_workload_ledger(db: Session, year: str) -> None:
+    """
+    Rebuild annual workload from the current assignment tables.
+    This is the source of truth repair path when exams or assignments changed
+    outside the normal reset flow.
+    """
+    from app.modules.assignment.algorithm import _get_or_create_ledger, _increment_ledger
+
+    db.query(models.WorkloadLedger).filter_by(year=year).delete(synchronize_session=False)
+    db.flush()
+
+    def add_activity(cin: str, shift: sm.ShiftEnum, level: sm.LevelEnum, role: str = "SUPERVISOR") -> None:
+        _increment_ledger(_get_or_create_ledger(db, cin, year), shift, level, role=role)
+
+    for supervisor_field in (models.RoomAssignment.supervisor_1_id, models.RoomAssignment.supervisor_2_id):
+        rows = (
+            db.query(models.Teacher.cin, sm.ExamSlot.shift, sm.Exam.level)
+            .join(models.RoomAssignment, models.Teacher.id == supervisor_field)
+            .join(sm.RoomSlotAssignment, models.RoomAssignment.room_slot_assignment_id == sm.RoomSlotAssignment.id)
+            .join(sm.ExamSlot, sm.RoomSlotAssignment.exam_slot_id == sm.ExamSlot.id)
+            .join(sm.Exam, sm.ExamSlot.exam_id == sm.Exam.id)
+            .filter(sm.Exam.year == year)
+            .all()
+        )
+        for cin, shift, level in rows:
+            add_activity(cin, shift, level)
+
+    reserve_rows = (
+        db.query(models.Teacher.cin, sm.ExamSlot.shift, sm.Exam.level)
+        .join(models.ReserveAssignment, models.Teacher.id == models.ReserveAssignment.teacher_id)
+        .join(sm.ExamSlot, models.ReserveAssignment.exam_slot_id == sm.ExamSlot.id)
+        .join(sm.Exam, sm.ExamSlot.exam_id == sm.Exam.id)
+        .filter(sm.Exam.year == year)
+        .all()
+    )
+    for cin, shift, level in reserve_rows:
+        add_activity(cin, shift, level, role="RESERVE")
+
+    madaoume_rows = (
+        db.query(models.Teacher.cin, sm.ExamSlot.shift, sm.Exam.level)
+        .join(models.MadaoumeAssignment, models.Teacher.id == models.MadaoumeAssignment.teacher_id)
+        .join(sm.ExamSlot, models.MadaoumeAssignment.exam_slot_id == sm.ExamSlot.id)
+        .join(sm.Exam, sm.ExamSlot.exam_id == sm.Exam.id)
+        .filter(sm.Exam.year == year)
+        .all()
+    )
+    for cin, shift, level in madaoume_rows:
+        add_activity(cin, shift, level, role="MADAOUM")
+
+    db.commit()
 
 
 # ── Reset ──────────────────────────────────────────────────────────────────

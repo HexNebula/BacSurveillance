@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { useQueries } from '@tanstack/react-query'
 import { LayoutGrid } from 'lucide-react'
-import type { ExamFiliereRoom, Room } from '../../../types'
+import type { ExamFiliere, ExamFiliereRoom, Filiere, Room } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
 import { useExamFilieres } from '../../../hooks/useExam'
 import { useFiliereRooms, useAddFiliereRoom, useRemoveFiliereRoom } from '../../../hooks/useExam'
@@ -11,14 +12,17 @@ import { Button } from '../../../components/ui/Button'
 import { Modal } from '../../../components/ui/Modal'
 import { Spinner } from '../../../components/ui/Spinner'
 import { EmptyState } from '../../../components/ui/EmptyState'
+import { schedulingApi } from '../../../lib/api'
 import { cn } from '../../../lib/utils'
 
 // ── Room picker modal (per filière) ───────────────────────────────────────────
 
-function RoomPickerModal({ examFiliereId, maxRooms, filiereName, open, onClose }: {
+function RoomPickerModal({ examFiliereId, maxRooms, filiereName, examFilieres, filiereMap, open, onClose }: {
   examFiliereId: number
   maxRooms: number
   filiereName: string
+  examFilieres: ExamFiliere[]
+  filiereMap: Record<number, Filiere>
   open: boolean
   onClose: () => void
 }) {
@@ -29,8 +33,27 @@ function RoomPickerModal({ examFiliereId, maxRooms, filiereName, open, onClose }
   const toast      = useToast()
 
   const assignedIds = new Set(assigned.map((a: ExamFiliereRoom) => a.room_id))
+  const otherFilieres = examFilieres.filter(ef => ef.id !== examFiliereId)
+  const otherRoomQueries = useQueries({
+    queries: otherFilieres.map(ef => ({
+      queryKey: ['exam-filieres', ef.id, 'rooms'],
+      queryFn: () => schedulingApi.getFiliereRooms(ef.id),
+      enabled: open,
+    })),
+  })
+  const roomUsageByOtherFiliere = new Map<number, string>()
+
+  otherRoomQueries.forEach((query, index) => {
+    const examFiliere = otherFilieres[index]
+    const otherFiliereName = filiereMap[examFiliere.filiere_id]?.name_fr ?? `Filière #${examFiliere.filiere_id}`
+    for (const roomAssignment of query.data ?? []) {
+      roomUsageByOtherFiliere.set(roomAssignment.room_id, otherFiliereName)
+    }
+  })
 
   const toggle = (room: Room) => {
+    if (roomUsageByOtherFiliere.has(room.id)) return
+
     if (assignedIds.has(room.id)) {
       const efr = assigned.find((a: ExamFiliereRoom) => a.room_id === room.id)
       if (efr) removeRoom.mutate(efr.id, { onError: () => toast.error('Erreur') })
@@ -55,24 +78,31 @@ function RoomPickerModal({ examFiliereId, maxRooms, filiereName, open, onClose }
           <div className="flex flex-col gap-2">
             {allRooms.map(room => {
               const checked = assignedIds.has(room.id)
+              const assignedElsewhere = !checked ? roomUsageByOtherFiliere.get(room.id) : null
               return (
                 <label
                   key={room.id}
                   className={cn(
                     'flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-all',
-                    checked
+                    assignedElsewhere
+                      ? 'cursor-not-allowed border-slate-200 bg-slate-100/80 text-slate-400 opacity-70'
+                      : checked
                       ? 'border-indigo-300 bg-indigo-50 text-indigo-800'
                       : 'border-slate-200 bg-white hover:bg-slate-50',
                   )}
+                  title={assignedElsewhere ? `Déjà affectée à ${assignedElsewhere}` : undefined}
                 >
                   <input
                     type="checkbox"
                     checked={checked}
+                    disabled={!!assignedElsewhere}
                     className="w-4 h-4 accent-indigo-500"
                     onChange={() => toggle(room)}
                   />
                   <span className="flex-1 text-sm font-medium">{room.name}</span>
-                  {room.capacity && <span className="text-xs text-slate-400">{room.capacity} places</span>}
+                  <span className="text-right text-xs text-slate-400">
+                    {assignedElsewhere ?? (room.capacity ? `${room.capacity} places` : '')}
+                  </span>
                 </label>
               )
             })}
@@ -91,10 +121,12 @@ function RoomPickerModal({ examFiliereId, maxRooms, filiereName, open, onClose }
 
 // ── Filière card ──────────────────────────────────────────────────────────────
 
-function FiliereCard({ examFiliereId, filiereName, maxRooms }: {
+function FiliereCard({ examFiliereId, filiereName, maxRooms, examFilieres, filiereMap }: {
   examFiliereId: number
   filiereName: string
   maxRooms: number
+  examFilieres: ExamFiliere[]
+  filiereMap: Record<number, Filiere>
 }) {
   const { data: assigned = [] } = useFiliereRooms(examFiliereId)
   const { data: allRooms = [] } = useRooms()
@@ -145,6 +177,8 @@ function FiliereCard({ examFiliereId, filiereName, maxRooms }: {
         examFiliereId={examFiliereId}
         maxRooms={maxRooms}
         filiereName={filiereName}
+        examFilieres={examFilieres}
+        filiereMap={filiereMap}
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
       />
@@ -181,6 +215,8 @@ export default function RoomAssignmentsPage() {
               examFiliereId={ef.id}
               filiereName={filiereMap[ef.filiere_id]?.name_fr ?? `Filière #${ef.filiere_id}`}
               maxRooms={ef.room_count}
+              examFilieres={examFilieres}
+              filiereMap={filiereMap}
             />
           ))}
         </div>

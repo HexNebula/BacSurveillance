@@ -80,6 +80,8 @@ export interface ExamSlot {
   slot_order: number   // 1 = S1, 2 = S2
   is_active: boolean
   reserve_count: number | null
+  start_time: string | null
+  end_time: string | null
 }
 
 export interface RoomSlotAssignment {
@@ -107,6 +109,7 @@ export interface Teacher {
   som: string | null
   school: string | null
   subject_id: number | null
+  subject_name?: string | null
   ordinal: number | null
 }
 
@@ -156,6 +159,8 @@ export interface TeacherSlotCell {
 export interface TeacherScheduleRow {
   teacher_id: number
   name_fr: string
+  gender: GenderEnum
+  school: string | null
   ordinal: number | null
   cin: string
   cells: TeacherSlotCell[]
@@ -179,6 +184,8 @@ export interface WorkloadLedger {
   bac2_count: number
   morning_count: number
   afternoon_count: number
+  madaoume_count: number
+  reserve_count: number
 }
 
 // ── Algorithm result ──────────────────────────────────────────────────────────

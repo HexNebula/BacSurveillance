@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import type { TeacherExemption, ExemptionTypeEnum } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
@@ -174,8 +174,7 @@ export default function ConfigPage() {
   const [exModalOpen, setExModalOpen] = useState(false)
   const [deleting, setDeleting]       = useState<TeacherExemption | null>(null)
   const [maxReserves, setMaxReserves] = useState<number | null>(null)
-
-  useEffect(() => { if (exam) setMaxReserves(exam.max_reserves) }, [exam?.max_reserves])
+  const maxReservesValue = maxReserves ?? exam?.max_reserves ?? 0
 
   const teacherMap  = Object.fromEntries(teachers.map(t => [t.id, t.name_fr]))
   const filiereMap  = Object.fromEntries(filieres.map(f => [f.id, f.name_fr]))
@@ -211,9 +210,8 @@ export default function ConfigPage() {
   ]
 
   const handleSaveReserves = () => {
-    if (maxReserves === null) return
     updateExam.mutate(
-      { id: examId, data: { max_reserves: maxReserves } },
+      { id: examId, data: { max_reserves: maxReservesValue } },
       { onSuccess: () => toast.success('Mis à jour'), onError: () => toast.error('Erreur') },
     )
   }
@@ -242,7 +240,7 @@ export default function ConfigPage() {
             <Input
               label="Réservistes max"
               type="number"
-              value={maxReserves ?? ''}
+              value={maxReservesValue}
               onChange={e => setMaxReserves(Number(e.target.value))}
               min={0}
               max={20}

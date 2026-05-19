@@ -3,9 +3,21 @@ import type {
   CenterSettings, Room, Subject, Filiere, FiliereSubject,
   Exam, ExamFiliere, ExamSlot, RoomSlotAssignment, ExamFiliereRoom,
   Teacher, ExamTeacher, TeacherExemption, RoomAssignment, WorkloadLedger, TeacherSchedule,
+  AssignmentResult,
 } from '../types'
 
 const http = axios.create({ baseURL: '/api/v1', timeout: 60_000 })
+
+export function apiErrorMessage(error: unknown, fallback = 'Erreur serveur') {
+  if (axios.isAxiosError(error)) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string') return detail
+    if (Array.isArray(detail) && detail.length > 0) return detail[0]?.msg ?? fallback
+    if (error.code === 'ECONNABORTED') return 'La requête a expiré. Vérifiez le backend puis réessayez.'
+    if (!error.response) return 'Backend injoignable. Vérifiez que le serveur API est lancé.'
+  }
+  return fallback
+}
 
 // ── Center ────────────────────────────────────────────────────────────────────
 
@@ -104,10 +116,17 @@ export const schedulingApi = {
   createExamSlot: (data: {
     exam_id: number; exam_filiere_id: number; subject_id: number
     day: number; shift: string; slot_order: number
+    start_time?: string | null; end_time?: string | null
   }) =>
     http.post<ExamSlot>('/scheduling/exam-slots', data).then(r => r.data),
 
-  updateExamSlot: (id: number, data: { subject_id?: number; is_active?: boolean; reserve_count?: number }) =>
+  updateExamSlot: (id: number, data: {
+    subject_id?: number
+    is_active?: boolean
+    reserve_count?: number
+    start_time?: string | null
+    end_time?: string | null
+  }) =>
     http.patch<ExamSlot>(`/scheduling/exam-slots/${id}`, data).then(r => r.data),
 
   deleteExamSlot: (id: number) =>
@@ -178,13 +197,7 @@ export const assignmentApi = {
 
   // Distribution
   runAssignment: (examId: number) =>
-    http.post<{
-      room_assignments: RoomAssignment[]
-      warnings: Array<{ type: string; code: string; message: string; context: Record<string, unknown> }>
-      total_activities: number
-      fair_target_floor: number
-      fair_target_ceil: number
-    }>(`/assignment/exams/${examId}/run`).then(r => r.data),
+    http.post<AssignmentResult>(`/assignment/exams/${examId}/run`).then(r => r.data),
 
   resetAssignment: (examId: number) =>
     http.post(`/assignment/exams/${examId}/reset`).then(r => r.data),

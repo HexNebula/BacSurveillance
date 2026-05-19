@@ -38,6 +38,9 @@ def delete_exam(db: Session, exam_id: int) -> bool:
     if not obj:
         return False
 
+    from app.modules.assignment.crud import reset_assignments
+    reset_assignments(db, obj)
+
     # Collect IDs needed for sub-table cleanup
     slot_ids = [s.id for s in db.query(models.ExamSlot.id).filter_by(exam_id=exam_id)]
     rsa_ids  = [

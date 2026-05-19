@@ -19,6 +19,7 @@ import { Button } from '../../../components/ui/Button'
 import { Modal } from '../../../components/ui/Modal'
 import { Select } from '../../../components/ui/Select'
 import { Spinner } from '../../../components/ui/Spinner'
+import { SlotTimePicker } from '../../../components/ui/SlotTimePicker'
 import { cn } from '../../../lib/utils'
 
 type ShiftKey = 'MORNING' | 'AFTERNOON'
@@ -104,6 +105,16 @@ function ScheduleCell({ slot, examFiliereId, day, shift, slotOrder, examId, subj
     updateSlot.mutate({ id: slot.id, data: { is_active: checked }, examId }, { onError: () => toast.error('Erreur') })
   }
 
+  const handleStartTimeChange = (value: string | null) => {
+    if (!slot) return
+    updateSlot.mutate({ id: slot.id, data: { start_time: value }, examId }, { onError: () => toast.error('Erreur') })
+  }
+
+  const handleEndTimeChange = (value: string | null) => {
+    if (!slot) return
+    updateSlot.mutate({ id: slot.id, data: { end_time: value }, examId }, { onError: () => toast.error('Erreur') })
+  }
+
   const isBusy = createSlot.isPending || updateSlot.isPending || deleteSlot.isPending
 
   return (
@@ -131,15 +142,25 @@ function ScheduleCell({ slot, examFiliereId, day, shift, slotOrder, examId, subj
         </select>
 
         {slot && (
-          <div className="flex items-center gap-2">
-            <Switch.Root
-              checked={slot.is_active}
-              onCheckedChange={handleToggle}
-              className="w-9 h-5 rounded-full bg-slate-200 data-[state=checked]:bg-indigo-500 relative cursor-pointer border-none outline-none transition-colors shrink-0"
-            >
-              <Switch.Thumb className="block w-4 h-4 bg-white rounded-full shadow-sm translate-x-0.5 data-[state=checked]:translate-x-4 transition-transform" />
-            </Switch.Root>
-            <span className="text-xs text-slate-400">{slot.is_active ? 'Actif' : 'Inactif'}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <SlotTimePicker
+              startTime={slot.start_time}
+              endTime={slot.end_time}
+              onChangeStart={handleStartTimeChange}
+              onChangeEnd={handleEndTimeChange}
+              disabled={isBusy}
+            />
+
+            <div className="flex items-center gap-2">
+              <Switch.Root
+                checked={slot.is_active}
+                onCheckedChange={handleToggle}
+                className="w-9 h-5 rounded-full bg-slate-200 data-[state=checked]:bg-indigo-500 relative cursor-pointer border-none outline-none transition-colors shrink-0"
+              >
+                <Switch.Thumb className="block w-4 h-4 bg-white rounded-full shadow-sm translate-x-0.5 data-[state=checked]:translate-x-4 transition-transform" />
+              </Switch.Root>
+              <span className="text-xs text-slate-400">{slot.is_active ? 'Actif' : 'Inactif'}</span>
+            </div>
           </div>
         )}
       </div>

@@ -110,6 +110,10 @@ export function useRunAssignment() {
     mutationFn: assignmentApi.runAssignment,
     onSuccess: (_, examId) => {
       qc.invalidateQueries({ queryKey: ['exams', examId, 'room-assignments'] })
+      qc.invalidateQueries({ queryKey: ['exams', examId, 'teacher-schedule'] })
+      qc.invalidateQueries({ queryKey: ['exams', examId] })
+      qc.invalidateQueries({ queryKey: ['exams'] })
+      qc.invalidateQueries({ queryKey: ['workload'] })
     },
   })
 }
@@ -121,7 +125,9 @@ export function useResetAssignment(examId: number) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['exams', examId, 'room-assignments'] })
       qc.invalidateQueries({ queryKey: ['exams', examId, 'teacher-schedule'] })
+      qc.invalidateQueries({ queryKey: ['exams', examId] })
       qc.invalidateQueries({ queryKey: ['exams'] })
+      qc.invalidateQueries({ queryKey: ['workload'] })
     },
   })
 }

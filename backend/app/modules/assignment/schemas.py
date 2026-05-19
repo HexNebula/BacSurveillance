@@ -33,6 +33,7 @@ class TeacherOut(BaseModel):
     som:        str | None
     school:     str | None
     subject_id: int | None
+    subject_name: str | None = None
     ordinal:    int | None
     model_config = {"from_attributes": True}
 
@@ -130,6 +131,8 @@ class TeacherSlotCell(BaseModel):
 class TeacherScheduleRow(BaseModel):
     teacher_id:      int
     name_fr:         str
+    gender:          GenderEnum
+    school:          str | None
     ordinal:         int | None
     cin:             str
     cells:           list[TeacherSlotCell]

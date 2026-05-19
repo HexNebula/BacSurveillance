@@ -16,17 +16,17 @@ router = APIRouter(prefix="/assignment", tags=["Assignment"])
 
 @router.get("/teachers", response_model=list[schemas.TeacherOut])
 def list_all_teachers(db: Session = Depends(get_db)):
-    return crud.get_all_teachers(db)
+    return [crud.teacher_out(db, teacher) for teacher in crud.get_all_teachers(db)]
 
 
 @router.post("/teachers", response_model=schemas.TeacherOut, status_code=201)
 def create_teacher(data: schemas.TeacherCreate, db: Session = Depends(get_db)):
-    return crud.create_teacher(db, data)
+    return crud.teacher_out(db, crud.create_teacher(db, data))
 
 
 @router.post("/teachers/bulk", response_model=list[schemas.TeacherOut], status_code=201)
 def bulk_create_teachers(teachers: list[schemas.TeacherCreate], db: Session = Depends(get_db)):
-    return crud.bulk_create_teachers(db, teachers)
+    return [crud.teacher_out(db, teacher) for teacher in crud.bulk_create_teachers(db, teachers)]
 
 
 @router.patch("/teachers/{teacher_id}", response_model=schemas.TeacherOut)
@@ -34,7 +34,7 @@ def update_teacher(teacher_id: int, data: schemas.TeacherUpdate, db: Session = D
     obj = crud.update_teacher(db, teacher_id, data)
     if not obj:
         raise HTTPException(status_code=404, detail="Teacher not found")
-    return obj
+    return crud.teacher_out(db, obj)
 
 
 @router.delete("/teachers/{teacher_id}", status_code=204)
@@ -55,7 +55,7 @@ def delete_teacher(teacher_id: int, db: Session = Depends(get_db)):
 
 @router.get("/exams/{exam_id}/teachers", response_model=list[schemas.TeacherOut])
 def list_exam_teachers(exam_id: int, db: Session = Depends(get_db)):
-    return crud.get_teachers_for_exam(db, exam_id)
+    return [crud.teacher_out(db, teacher) for teacher in crud.get_teachers_for_exam(db, exam_id)]
 
 
 @router.post("/exams/{exam_id}/teachers", response_model=schemas.ExamTeacherOut, status_code=201)
@@ -115,6 +115,7 @@ def run(exam_id: int, db: Session = Depends(get_db)):
                 detail=f"Distribuez d'abord l'examen 1BAC {exam.year} avant de lancer celui-ci.",
             )
 
+    crud.rebuild_workload_ledger(db, exam.year)
     result = run_assignment(db, exam)
 
     # ── Mark exam as active after successful run ───────────────────────────

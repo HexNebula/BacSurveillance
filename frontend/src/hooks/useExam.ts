@@ -109,7 +109,17 @@ export function useCreateExamSlot() {
 export function useUpdateExamSlot() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { subject_id?: number; is_active?: boolean; reserve_count?: number }; examId: number }) =>
+    mutationFn: ({ id, data }: {
+      id: number
+      data: {
+        subject_id?: number
+        is_active?: boolean
+        reserve_count?: number
+        start_time?: string | null
+        end_time?: string | null
+      }
+      examId: number
+    }) =>
       schedulingApi.updateExamSlot(id, data),
     onSuccess: (_, vars) =>
       qc.invalidateQueries({ queryKey: ['exams', vars.examId, 'slots'] }),

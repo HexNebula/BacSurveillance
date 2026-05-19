@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Play, AlertTriangle, CheckCircle2, Pencil, LayoutList, Users, CheckCheck, Lock, Trash2 } from 'lucide-react'
-import type { RoomAssignment, TeacherScheduleRow, TeacherSlotCell, WorkloadLedger } from '../../../types'
+import type { AssignmentWarning, ExamSlot, RoomAssignment, Subject, TeacherScheduleRow, TeacherSlotCell, WorkloadLedger } from '../../../types'
 import { useActiveExam } from '../../../context/ActiveExamContext'
 import {
   useRunAssignment, useResetAssignment, useRoomAssignments, useUpdateRoomAssignment,
   useExamTeachers, useTeacherSchedule, useWorkload,
 } from '../../../hooks/useAssignment'
-import { useExam, useExams, useUpdateExam } from '../../../hooks/useExam'
+import { useExam, useExamSlots, useExams, useUpdateExam } from '../../../hooks/useExam'
+import { useSubjects } from '../../../hooks/useCenter'
 import { useToast } from '../../../hooks/useToast'
 import { PageHeader } from '../../../components/ui/PageHeader'
 import { Button } from '../../../components/ui/Button'
@@ -15,14 +16,69 @@ import { ConfirmDialog } from '../../../components/ui/ConfirmDialog'
 import { Select } from '../../../components/ui/Select'
 import { Badge } from '../../../components/ui/Badge'
 import { Spinner } from '../../../components/ui/Spinner'
+import { apiErrorMessage } from '../../../lib/api'
 import { cn } from '../../../lib/utils'
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
-const SHIFT_LABEL: Record<string, string> = { MORNING: 'Matin', AFTERNOON: 'AM' }
+const SHIFT_LABEL: Record<string, string> = { MORNING: 'Matin', AFTERNOON: 'Après-midi' }
+const SHIFT_ORDER: Record<string, number> = { MORNING: 0, AFTERNOON: 1 }
 
 function slotLabel(day: number, shift: string, order: number) {
-  return `J${day} ${SHIFT_LABEL[shift] ?? shift} S${order}`
+  return `Jour ${day} · ${SHIFT_LABEL[shift] ?? shift} · Séance ${order}`
+}
+
+function shiftOrder(shift: string) {
+  return SHIFT_ORDER[shift] ?? Number.MAX_SAFE_INTEGER
+}
+
+type RepeatedPairWarning = {
+  room_id?: number
+  teacher_1_name?: string
+  teacher_2_name?: string
+  teacher_1_id?: number
+  teacher_2_id?: number
+}
+
+type RoomCandidateWarning = {
+  room_id?: number
+  needed?: number
+  candidate_count?: number
+}
+
+function WarningDetails({ warning }: { warning: AssignmentWarning }) {
+  const repeatedPairs = Array.isArray(warning.context.repeated_pairs)
+    ? warning.context.repeated_pairs as RepeatedPairWarning[]
+    : []
+  const roomCandidateCounts = Array.isArray(warning.context.room_candidate_counts)
+    ? warning.context.room_candidate_counts as RoomCandidateWarning[]
+    : []
+
+  if (repeatedPairs.length > 0) {
+    return (
+      <div className="mt-1.5 flex flex-col gap-1">
+        {repeatedPairs.map((pair, index) => (
+          <div key={index} className="rounded-md bg-amber-100/70 px-2 py-1 text-[11px] text-amber-900">
+            Salle {pair.room_id ?? '—'} : {pair.teacher_1_name ?? `Prof ${pair.teacher_1_id}`} + {pair.teacher_2_name ?? `Prof ${pair.teacher_2_id}`}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  if (roomCandidateCounts.length > 0) {
+    return (
+      <div className="mt-1.5 grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+        {roomCandidateCounts.map((room, index) => (
+          <div key={index} className="rounded-md bg-amber-100/70 px-2 py-1 text-[11px] text-amber-900">
+            Salle {room.room_id ?? '—'} : {room.candidate_count ?? 0}/{room.needed ?? 0} candidats
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return null
 }
 
 // ── Override modal ───────────────────────────────────────────────────────────
@@ -36,11 +92,6 @@ function OverrideModal({ open, onClose, assignment, examId }: {
 
   const [sup1, setSup1] = useState(assignment.supervisor_1_id?.toString() ?? '')
   const [sup2, setSup2] = useState(assignment.supervisor_2_id?.toString() ?? '')
-
-  useEffect(() => {
-    setSup1(assignment.supervisor_1_id?.toString() ?? '')
-    setSup2(assignment.supervisor_2_id?.toString() ?? '')
-  }, [assignment.id])
 
   const handleSave = () => {
     updateRA.mutate(
@@ -67,75 +118,181 @@ function OverrideModal({ open, onClose, assignment, examId }: {
 
 // ── Par salle view ───────────────────────────────────────────────────────────
 
-function SlotGroupHeader({ day, shift, slotOrder, filiereName }: {
-  day: number; shift: string; slotOrder: number; filiereName: string
+type RoomSubjectGroup = {
+  label: string
+  timeRange: string | null
+  rooms: RoomAssignment[]
+}
+
+type RoomSessionGroup = {
+  key: string
+  day: number
+  shift: string
+  slotOrder: number
+  subjects: RoomSubjectGroup[]
+}
+
+type SlotMeta = {
+  subjectName: string
+  timeRange: string | null
+}
+
+function timeRangeFor(slot: ExamSlot | undefined) {
+  if (!slot?.start_time || !slot.end_time) return null
+  return `${slot.start_time}-${slot.end_time}`
+}
+
+function numericPart(value: string) {
+  const match = value.match(/\d+/)
+  return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER
+}
+
+function compareRooms(a: RoomAssignment, b: RoomAssignment) {
+  return numericPart(a.room_name) - numericPart(b.room_name)
+    || a.room_name.localeCompare(b.room_name)
+}
+
+function groupRoomAssignments(
+  assignments: RoomAssignment[],
+  slotMetaMap: Record<number, SlotMeta>,
+): RoomSessionGroup[] {
+  const sessionMap = new Map<string, RoomSessionGroup>()
+
+  for (const assignment of assignments) {
+    const sessionKey = `${assignment.day}-${assignment.shift}-${assignment.slot_order}`
+    let session = sessionMap.get(sessionKey)
+    if (!session) {
+      session = {
+        key: sessionKey,
+        day: assignment.day,
+        shift: assignment.shift,
+        slotOrder: assignment.slot_order,
+        subjects: [],
+      }
+      sessionMap.set(sessionKey, session)
+    }
+
+    const slotMeta = slotMetaMap[assignment.exam_slot_id]
+    const subjectName = slotMeta?.subjectName ?? 'Matière non renseignée'
+    const subjectLabel = `${assignment.filiere_name} · ${subjectName}`
+    let subject = session.subjects.find(group => group.label === subjectLabel)
+    if (!subject) {
+      subject = { label: subjectLabel, timeRange: slotMeta?.timeRange ?? null, rooms: [] }
+      session.subjects.push(subject)
+    }
+    subject.rooms.push(assignment)
+  }
+
+  const sessions = Array.from(sessionMap.values())
+  for (const session of sessions) {
+    session.subjects.sort((a, b) => a.label.localeCompare(b.label))
+    for (const subject of session.subjects) {
+      subject.rooms.sort(compareRooms)
+    }
+  }
+
+  return sessions.sort((a, b) =>
+    a.day - b.day
+    || shiftOrder(a.shift) - shiftOrder(b.shift)
+    || a.slotOrder - b.slotOrder
+  )
+}
+
+function SupervisorName({ id, teacherMap }: { id: number | null; teacherMap: Record<number, string> }) {
+  if (!id) return <span className="text-slate-300">—</span>
+  return <span className="font-medium text-slate-800">{teacherMap[id] ?? `#${id}`}</span>
+}
+
+function RoomAssignmentItem({
+  assignment,
+  teacherMap,
+  onEdit,
+}: {
+  assignment: RoomAssignment
+  teacherMap: Record<number, string>
+  onEdit: () => void
 }) {
   return (
-    <tr className="bg-indigo-50 border-b border-indigo-100">
-      <td colSpan={5} className="px-4 py-2">
-        <div className="flex items-center gap-3">
-          <span className="font-semibold text-indigo-800 text-xs uppercase tracking-wide">
-            {slotLabel(day, shift, slotOrder)}
-          </span>
-          <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-medium">
-            {filiereName}
-          </span>
-        </div>
-      </td>
-    </tr>
+    <div className="grid grid-cols-[120px_1fr_96px_36px] items-center gap-4 border-t border-slate-100 px-4 py-3 first:border-t-0 hover:bg-slate-50/70">
+      <div className="font-semibold text-slate-700">{assignment.room_name}</div>
+      <div className="min-w-0 text-sm text-slate-600">
+        <SupervisorName id={assignment.supervisor_1_id} teacherMap={teacherMap} />
+        <span className="px-2 text-slate-300">+</span>
+        <SupervisorName id={assignment.supervisor_2_id} teacherMap={teacherMap} />
+      </div>
+      <Badge variant={assignment.status === 'OVERRIDDEN' ? 'warning' : 'default'}>
+        {assignment.status === 'OVERRIDDEN' ? 'Modifié' : 'Auto'}
+      </Badge>
+      <Button variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={onEdit} />
+    </div>
   )
 }
 
 function RoomView({ examId }: { examId: number }) {
   const { data: assignments = [], isLoading } = useRoomAssignments(examId)
   const { data: teachers = [] }               = useExamTeachers(examId)
+  const { data: slots = [] }                  = useExamSlots(examId)
+  const { data: subjects = [] }               = useSubjects()
   const [override, setOverride] = useState<RoomAssignment | null>(null)
 
   const teacherMap = Object.fromEntries(teachers.map(t => [t.id, t.name_fr]))
+  const subjectMap = Object.fromEntries(subjects.map((subject: Subject) => [subject.id, subject.name_fr]))
+  const slotMetaMap = Object.fromEntries(slots.map(slot => [
+    slot.id,
+    {
+      subjectName: subjectMap[slot.subject_id] ?? `Matière #${slot.subject_id}`,
+      timeRange: timeRangeFor(slot),
+    },
+  ]))
 
   if (isLoading) return <div className="flex justify-center py-10"><Spinner size={20} className="text-indigo-500" /></div>
   if (assignments.length === 0) return <p className="text-center text-slate-400 py-10 text-sm">Aucune affectation. Lancez d'abord la distribution.</p>
 
-  const rows: Array<{ type: 'header'; ra: RoomAssignment } | { type: 'row'; ra: RoomAssignment }> = []
-  let lastSlotId: number | null = null
-  for (const ra of assignments) {
-    if (ra.exam_slot_id !== lastSlotId) { rows.push({ type: 'header', ra }); lastSlotId = ra.exam_slot_id }
-    rows.push({ type: 'row', ra })
-  }
+  const groups = groupRoomAssignments(assignments, slotMetaMap)
 
   return (
     <>
-      <div className="rounded-xl border border-slate-200 overflow-hidden shadow-sm bg-white">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="bg-slate-50 border-b border-slate-200">
-              {['Salle', 'Surveillant 1', 'Surveillant 2', 'Statut', ''].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
+      <div className="flex flex-col gap-4">
+        {groups.map(session => (
+          <section key={session.key} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+              <h3 className="text-sm font-bold text-slate-900">
+                {slotLabel(session.day, session.shift, session.slotOrder)}
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-400">
+                {session.subjects.reduce((sum, subject) => sum + subject.rooms.length, 0)} salle(s)
+              </p>
+            </div>
+
+            <div className="divide-y divide-slate-100">
+              {session.subjects.map(subject => (
+                <div key={subject.label}>
+                  <div className="flex items-center justify-between bg-indigo-50/50 px-5 py-2.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-indigo-800">{subject.label}</span>
+                      {subject.timeRange && (
+                        <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-xs font-medium text-indigo-500">
+                          {subject.timeRange}
+                        </span>
+                      )}
+                    </div>
+                    <span className="shrink-0 text-xs text-indigo-500">{subject.rooms.length} salle(s)</span>
+                  </div>
+                  <div>
+                    {subject.rooms.map(room => (
+                      <RoomAssignmentItem
+                        key={room.id}
+                        assignment={room}
+                        teacherMap={teacherMap}
+                        onEdit={() => setOverride(room)}
+                      />
+                    ))}
+                  </div>
+                </div>
               ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((entry, i) =>
-              entry.type === 'header' ? (
-                <SlotGroupHeader key={`h-${entry.ra.exam_slot_id}`} day={entry.ra.day} shift={entry.ra.shift} slotOrder={entry.ra.slot_order} filiereName={entry.ra.filiere_name} />
-              ) : (
-                <tr key={`${entry.ra.id}-${i}`} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3 text-sm text-slate-700 font-medium">{entry.ra.room_name}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{entry.ra.supervisor_1_id ? teacherMap[entry.ra.supervisor_1_id] ?? `#${entry.ra.supervisor_1_id}` : '—'}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700">{entry.ra.supervisor_2_id ? teacherMap[entry.ra.supervisor_2_id] ?? `#${entry.ra.supervisor_2_id}` : '—'}</td>
-                  <td className="px-4 py-3">
-                    <Badge variant={entry.ra.status === 'OVERRIDDEN' ? 'warning' : 'default'}>
-                      {entry.ra.status === 'OVERRIDDEN' ? 'Modifié' : 'Auto'}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Button variant="ghost" size="sm" icon={<Pencil size={13} />} onClick={() => setOverride(entry.ra)} />
-                  </td>
-                </tr>
-              )
-            )}
-          </tbody>
-        </table>
+            </div>
+          </section>
+        ))}
       </div>
       {override && <OverrideModal open={!!override} onClose={() => setOverride(null)} assignment={override} examId={examId} />}
     </>
@@ -348,7 +505,7 @@ export default function DistributionPage() {
   const [confirmStatus, setConfirmStatus]   = useState<'ACTIVE' | 'VALIDATED' | null>(null)
   const [activeTab, setActiveTab]           = useState<ViewTab>('rooms')
   const [lastResult, setLastResult]   = useState<{
-    warnings: Array<{ type: string; code: string; message: string; context: Record<string, unknown> }>
+    warnings: AssignmentWarning[]
     total_activities: number
     fair_target_floor: number
     fair_target_ceil: number
@@ -360,7 +517,7 @@ export default function DistributionPage() {
         setConfirmStatus(null)
         toast.success(status === 'ACTIVE' ? 'Distribution validée — examen en cours' : 'Examen clôturé')
       },
-      onError: () => toast.error('Erreur'),
+      onError: error => toast.error(apiErrorMessage(error, 'Erreur')),
     })
   }
 
@@ -375,7 +532,7 @@ export default function DistributionPage() {
           toast.toast(`Distribution terminée — ${result.warnings.length} avertissement(s)`, 'info')
         }
       },
-      onError: () => { setConfirmOpen(false); toast.error('Erreur lors de la distribution') },
+      onError: error => { setConfirmOpen(false); toast.error(apiErrorMessage(error, 'Erreur lors de la distribution')) },
     })
   }
 
@@ -386,9 +543,9 @@ export default function DistributionPage() {
         setResetOpen(false)
         toast.success('Répartition réinitialisée')
       },
-      onError: () => {
+      onError: error => {
         setResetOpen(false)
-        toast.error('Erreur lors de la réinitialisation')
+        toast.error(apiErrorMessage(error, 'Erreur lors de la réinitialisation'))
       },
     })
   }
@@ -453,9 +610,12 @@ export default function DistributionPage() {
             <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
             <div>
               <p className="font-semibold text-amber-800 text-sm mb-2">{lastResult.warnings.length} avertissement(s)</p>
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-2">
                 {lastResult.warnings.map((w, i) => (
-                  <p key={i} className="text-xs text-amber-700"><strong>[{w.code}]</strong> {w.message}</p>
+                  <div key={i} className="text-xs text-amber-700">
+                    <p><strong>[{w.code}]</strong> {w.message}</p>
+                    <WarningDetails warning={w} />
+                  </div>
                 ))}
               </div>
             </div>
